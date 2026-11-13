@@ -1,3 +1,5 @@
+import { Viewer } from "./features/viewer/Viewer";
+
 export function App() {
   return (
     <div className="flex min-h-dvh flex-col">
@@ -15,7 +17,7 @@ export function App() {
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
         <h1 className="sr-only">OpenUtau AI Tuning Studio：USTX ビューア</h1>
-        <p className="text-sm text-muted-foreground">準備中です。</p>
+        <Viewer />
       </main>
 
       <footer className="border-t">
