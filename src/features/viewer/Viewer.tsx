@@ -1,5 +1,5 @@
 import { Loader2, Trash2 } from "lucide-react";
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
@@ -103,6 +103,32 @@ function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: Roun
     return set;
   }, [edits, partIndex]);
 
+  const hasEdits = edits.size > 0;
+
+  // 編集が残っているときにページを閉じる・再読み込みすると、ブラウザ標準の確認を出す
+  useEffect(() => {
+    if (!hasEdits) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // 古いブラウザは returnValue の設定で確認を出す
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasEdits]);
+
+  const discard = () => {
+    if (
+      hasEdits &&
+      !window.confirm(
+        `${edits.size} 個のノートの編集は、まだ書き出していません。破棄してよろしいですか？\n（書き出す場合は「キャンセル」を押し、「編集を反映して書き出す」を使ってください）`,
+      )
+    ) {
+      return;
+    }
+    close();
+  };
+
   const toggleVibrato = (note: Note, enabled: boolean) => {
     setEditError(null);
     const key = noteKey(partIndex, note.index);
@@ -132,7 +158,7 @@ function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: Roun
         title={project.name}
         description={project.comment || undefined}
         action={
-          <Button variant="ghost" size="sm" onClick={close}>
+          <Button variant="ghost" size="sm" onClick={discard}>
             <Trash2 aria-hidden />
             データを破棄
           </Button>
@@ -192,14 +218,15 @@ function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: Roun
                 ))}
               </ul>
             </nav>
+            {/* ほかのパートで編集した内容も戻せるよう、表示中のパートに関係なく出す */}
+            <EditToolbar />
+            {editError && (
+              <Alert tone="error" title="編集できませんでした">
+                <p>{editError}</p>
+              </Alert>
+            )}
             {part && part.notes.length > 0 ? (
               <>
-                <EditToolbar />
-                {editError && (
-                  <Alert tone="error" title="編集できませんでした">
-                    <p>{editError}</p>
-                  </Alert>
-                )}
                 <Suspense fallback={<PianoRollFallback />}>
                   <PianoRoll
                     part={part}
