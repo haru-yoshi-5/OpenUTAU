@@ -39,6 +39,8 @@ interface ViewState {
   setViewport: (size: ViewportSize) => void;
   /** パートを切り替えたときに表示範囲を設定し直す。focusY は縦方向の中央に置きたい位置（px） */
   resetContent: (content: ContentBounds, focusY: number) => void;
+  /** 編集で表示範囲が変わったときに、今の表示位置を保ったまま範囲だけを更新する */
+  setContent: (content: ContentBounds) => void;
   /** anchorX（描画領域内の px）の下にある tick を固定したまま拡大・縮小する */
   zoomBy: (factor: number, anchorX?: number) => void;
   /** px 単位でスクロールする */
@@ -88,6 +90,9 @@ export const useViewStore = create<ViewState>()((set) => ({
       content,
       ...clampScroll({ ...s, content }, content.startTick, focusY - s.viewport.height / 2),
     })),
+
+  setContent: (content) =>
+    set((s) => ({ content, ...clampScroll({ ...s, content }, s.scrollTick, s.scrollY) })),
 
   zoomBy: (factor, anchorX) =>
     set((s) => {

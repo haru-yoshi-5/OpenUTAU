@@ -35,9 +35,14 @@ interface PianoRollProps {
   bars: readonly Bar[];
   tempos: readonly Tempo[];
   pitch: PitchCurve | null;
+  /**
+   * これが変わったときだけ、表示位置を先頭に戻す（パートの切り替え・ファイルの読み込み）。
+   * 編集で part や pitch が変わっても、表示位置は保つ
+   */
+  resetKey: unknown;
 }
 
-export function PianoRoll({ part, bars, tempos, pitch }: PianoRollProps) {
+export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProps) {
   const containerRef = useRef<HTMLElement>(null);
   const helpId = useId();
   const theme = useRollTheme();
@@ -50,7 +55,8 @@ export function PianoRoll({ part, bars, tempos, pitch }: PianoRollProps) {
       viewport: s.viewport,
     })),
   );
-  const { setViewport, resetContent, zoomBy, scrollBy, setShowPitch } = useViewStore.getState();
+  const { setViewport, resetContent, setContent, zoomBy, scrollBy, setShowPitch } =
+    useViewStore.getState();
 
   // 描画領域の大きさを、コンテナの大きさに追従させる
   useLayoutEffect(() => {
@@ -69,10 +75,19 @@ export function PianoRoll({ part, bars, tempos, pitch }: PianoRollProps) {
     return () => observer.disconnect();
   }, [setViewport]);
 
-  // パートを切り替えたら先頭へ戻り、ノートが集まる音域を縦方向の中央に置く
+  // パートを切り替えたら先頭へ戻り、ノートが集まる音域を縦方向の中央に置く。
+  // 編集のたびに戻らないよう、resetKey が変わったときだけ実行する
+  const resetKeyRef = useRef<unknown>(undefined);
   useLayoutEffect(() => {
-    resetContent(contentBoundsOf(part, pitch), focusYOf(part.notes));
-  }, [part, pitch, resetContent]);
+    const bounds = contentBoundsOf(part, pitch);
+    if (resetKeyRef.current !== resetKey) {
+      resetKeyRef.current = resetKey;
+      resetContent(bounds, focusYOf(part.notes));
+    } else {
+      // 編集でピッチの助走などが変わったときは、表示位置を保ったまま範囲だけを更新する
+      setContent(bounds);
+    }
+  }, [part, pitch, resetKey, resetContent, setContent]);
 
   // ホイール：スクロール。Ctrl / ⌘ を押しながらで拡大・縮小（ページのスクロールを止めるため passive: false）
   useEffect(() => {

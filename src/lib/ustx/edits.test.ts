@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyEditsToProject,
+  editedFileName,
   type EditMap,
   exportEdited,
+  mergeNoteEdit,
   type NoteEdit,
   noteKey,
   normalizePitch,
@@ -193,5 +195,33 @@ describe("exportEdited", () => {
     expect(() => exportEdited(loaded, edits([[noteKey(0, 0), { vibrato: vibrato() }]]))).toThrow(
       UstxError,
     );
+  });
+});
+
+describe("mergeNoteEdit", () => {
+  const original = load().project.voiceParts[0].notes[0];
+
+  it("今の差分に重ね、元データと異なる項目だけを差分として残す", () => {
+    const merged = mergeNoteEdit(original, undefined, { vibrato: vibrato({ length: 60 }) });
+    expect(merged).toEqual({ vibrato: vibrato({ length: 60 }) });
+  });
+
+  it("元データと同じ値に戻した項目は差分から外し、何も残らなければ undefined を返す", () => {
+    const current = { vibrato: vibrato({ length: 60 }) };
+    expect(mergeNoteEdit(original, current, { vibrato: original.vibrato })).toBeUndefined();
+  });
+
+  it("別の項目の差分は保つ", () => {
+    const pitch = { snap_first: true, data: [{ x: -10, y: 0, shape: "io" as const }] };
+    const merged = mergeNoteEdit(original, { pitch }, { vibrato: original.vibrato });
+    expect(merged).toEqual({ pitch });
+  });
+});
+
+describe("editedFileName", () => {
+  it("拡張子の前に _edited を付ける", () => {
+    expect(editedFileName("song.ustx")).toBe("song_edited.ustx");
+    expect(editedFileName("Song.USTX")).toBe("Song_edited.ustx");
+    expect(editedFileName("a.b.ustx")).toBe("a.b_edited.ustx");
   });
 });

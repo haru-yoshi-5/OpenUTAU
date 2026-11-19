@@ -1,4 +1,5 @@
 import { type Document, isMap, YAMLSeq } from "yaml";
+import { isDeepStrictEqual } from "./deep-equal";
 import { UstxError } from "./errors";
 import { exportUnchanged, serializeVerified } from "./export";
 import type { LoadedUstx, Note, Project } from "./load";
@@ -73,11 +74,31 @@ export function normalizeVibrato(vibrato: Vibrato): Vibrato {
   };
 }
 
+/** OpenUtau でビブラートをオンにしたときの長さ（NotePresets.DefaultVibrato.VibratoLength） */
+export const DEFAULT_VIBRATO_LENGTH = 75;
+
 export function normalizeEdit(edit: NoteEdit): NoteEdit {
   return {
     ...(edit.pitch && { pitch: normalizePitch(edit.pitch) }),
     ...(edit.vibrato && { vibrato: normalizeVibrato(edit.vibrato) }),
   };
+}
+
+/**
+ * 今の差分に patch を重ねた、新しい差分を返す。
+ * 元データと同じ値に戻った項目は差分から外し、何も残らなければ undefined（＝元データのまま）を返す。
+ */
+export function mergeNoteEdit(
+  original: Pick<RawNote, "pitch" | "vibrato">,
+  current: NoteEdit | undefined,
+  patch: NoteEdit,
+): NoteEdit | undefined {
+  const next: NoteEdit = { ...current, ...normalizeEdit(patch) };
+  if (next.pitch && isDeepStrictEqual(next.pitch, original.pitch) === null) delete next.pitch;
+  if (next.vibrato && isDeepStrictEqual(next.vibrato, original.vibrato) === null) {
+    delete next.vibrato;
+  }
+  return next.pitch || next.vibrato ? next : undefined;
 }
 
 /**
@@ -159,6 +180,12 @@ function applyEditsToData(data: unknown, edits: EditMap): unknown {
     }
   }
   return root;
+}
+
+/** 元ファイルを上書きしないよう、編集版には接尾辞を付ける（例：song.ustx → song_edited.ustx） */
+export function editedFileName(fileName: string): string {
+  const base = fileName.replace(/\.ustx$/i, "");
+  return `${base}_edited.ustx`;
 }
 
 /**

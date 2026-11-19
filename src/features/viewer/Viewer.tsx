@@ -1,14 +1,24 @@
 import { Loader2, Trash2 } from "lucide-react";
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { computeBars } from "../../lib/ustx/bars";
-import type { LoadedUstx } from "../../lib/ustx/load";
+import {
+  applyEditsToProject,
+  DEFAULT_VIBRATO_LENGTH,
+  mergeNoteEdit,
+  noteKey,
+  parseNoteKey,
+} from "../../lib/ustx/edits";
+import { UstxError } from "../../lib/ustx/errors";
+import type { LoadedUstx, Note } from "../../lib/ustx/load";
 import { renderPartPitch } from "../../lib/ustx/pitch";
 import { TimeAxis } from "../../lib/ustx/time-axis";
 import { detectUnsupported } from "../../lib/ustx/unsupported";
+import { useEditStore } from "../../stores/edit-store";
 import { type RoundTripStatus, useProjectStore } from "../../stores/project-store";
+import { EditToolbar } from "./EditToolbar";
 import { ExportPanel } from "./ExportPanel";
 import { FileDropZone } from "./FileDropZone";
 import { NoteTable } from "./NoteTable";
@@ -59,13 +69,19 @@ export function Viewer() {
 }
 
 function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: RoundTripStatus }) {
-  const { project } = loaded;
+  const original = loaded.project;
   const partIndex = useProjectStore((s) => s.partIndex);
   const { selectPart, close } = useProjectStore.getState();
+  const edits = useEditStore((s) => s.edits);
+  const [editError, setEditError] = useState<string | null>(null);
 
-  const timeAxis = useMemo(() => new TimeAxis(project.tempos), [project.tempos]);
+  // 表示・ピッチ計算には差分を当てたプロジェクトを使う。変更の無いパートは同じオブジェクトのまま
+  const project = useMemo(() => applyEditsToProject(original, edits), [original, edits]);
+
+  // テンポ・拍子・ノートの位置は編集しないため、元データから一度だけ計算する
+  const timeAxis = useMemo(() => new TimeAxis(original.tempos), [original.tempos]);
   const bars = useMemo(() => {
-    const end = project.voiceParts.reduce(
+    const end = original.voiceParts.reduce(
       (max, p) =>
         Math.max(
           max,
@@ -73,11 +89,42 @@ function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: Roun
         ),
       0,
     );
-    return computeBars(project.timeSignatures, end);
-  }, [project]);
-  const unsupported = useMemo(() => detectUnsupported(project), [project]);
+    return computeBars(original.timeSignatures, end);
+  }, [original]);
+  const unsupported = useMemo(() => detectUnsupported(original), [original]);
   const part = project.voiceParts[partIndex];
   const pitch = useMemo(() => (part ? renderPartPitch(part, timeAxis) : null), [part, timeAxis]);
+  const editedNotes = useMemo(() => {
+    const set = new Set<number>();
+    for (const key of edits.keys()) {
+      const { partIndex: p, noteIndex } = parseNoteKey(key);
+      if (p === partIndex) set.add(noteIndex);
+    }
+    return set;
+  }, [edits, partIndex]);
+
+  const toggleVibrato = (note: Note, enabled: boolean) => {
+    setEditError(null);
+    const key = noteKey(partIndex, note.index);
+    const source = original.voiceParts[partIndex].notes.find((n) => n.index === note.index);
+    if (!source) return;
+    // オンにするときは OpenUtau と同じ既定の長さにし、周期・深さなどは今の値を引き継ぐ
+    const length = enabled
+      ? source.vibrato.length > 0
+        ? source.vibrato.length
+        : DEFAULT_VIBRATO_LENGTH
+      : 0;
+    try {
+      const after = mergeNoteEdit(source, edits.get(key), {
+        vibrato: { ...note.vibrato, length },
+      });
+      useEditStore
+        .getState()
+        .apply(enabled ? "ビブラートをオンにする" : "ビブラートをオフにする", [{ key, after }]);
+    } catch (e) {
+      setEditError(e instanceof UstxError ? e.message : "編集中に予期しないエラーが発生しました。");
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -147,10 +194,23 @@ function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: Roun
             </nav>
             {part && part.notes.length > 0 ? (
               <>
+                <EditToolbar />
+                {editError && (
+                  <Alert tone="error" title="編集できませんでした">
+                    <p>{editError}</p>
+                  </Alert>
+                )}
                 <Suspense fallback={<PianoRollFallback />}>
-                  <PianoRoll part={part} bars={bars} tempos={project.tempos} pitch={pitch} />
+                  <PianoRoll
+                    part={part}
+                    bars={bars}
+                    tempos={project.tempos}
+                    pitch={pitch}
+                    // 編集では表示位置を保ち、パートやファイルが変わったときだけ先頭へ戻す
+                    resetKey={original.voiceParts[partIndex]}
+                  />
                 </Suspense>
-                <NoteTable part={part} />
+                <NoteTable part={part} editedNotes={editedNotes} onToggleVibrato={toggleVibrato} />
               </>
             ) : (
               <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
