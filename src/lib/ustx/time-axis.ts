@@ -49,20 +49,30 @@ export class TimeAxis {
   }
 
   private findByTick(tick: number): TempoSegment {
-    let found = this.segments[0];
-    for (const seg of this.segments) {
-      if (seg.tick <= tick) found = seg;
-      else break;
-    }
-    return found;
+    return this.segments[lastIndexAtOrBefore(this.segments, "tick", tick)];
   }
 
   private findByMs(ms: number): TempoSegment {
-    let found = this.segments[0];
-    for (const seg of this.segments) {
-      if (seg.ms <= ms) found = seg;
-      else break;
-    }
-    return found;
+    return this.segments[lastIndexAtOrBefore(this.segments, "ms", ms)];
   }
+}
+
+/**
+ * segments[i][field] ≤ value となる最後の添字を二分探索で返す（無ければ 0）。
+ * segments は field について昇順。同じ値が並ぶ場合は後ろのもの（後から設定したテンポ）を選ぶ。
+ * ピッチ計算はノート・ピッチ点ごとに変換を呼ぶため、テンポ変更が多い曲でも遅くならないようにする
+ */
+function lastIndexAtOrBefore(
+  segments: readonly TempoSegment[],
+  field: "tick" | "ms",
+  value: number,
+): number {
+  let lo = 0;
+  let hi = segments.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (segments[mid][field] <= value) lo = mid + 1;
+    else hi = mid;
+  }
+  return Math.max(0, lo - 1);
 }
