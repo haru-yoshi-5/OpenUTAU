@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/*
+ * デザイントークン。色は CSS 変数で定義し、OS のダークモード設定に追従する。
+ * ピアノロール（Canvas）の配色は src/features/piano-roll/theme.ts で同じ値を持つ。
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-ring: var(--ring);
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", Meiryo,
+    sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+:root {
+  color-scheme: light;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --border: #e2e8f0;
+  --primary: #1e293b;
+  --primary-foreground: #f8fafc;
+  --accent: #e2e8f0;
+  --destructive: #dc2626;
+  --warning: #b45309;
+  --success: #059669;
+  --ring: #3b82f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --background: #0b1120;
+    --foreground: #e2e8f0;
+    --card: #111827;
+    --muted: #1e293b;
+    --muted-foreground: #94a3b8;
+    --border: #273449;
+    --primary: #e2e8f0;
+    --primary-foreground: #0f172a;
+    --accent: #273449;
+    --destructive: #f87171;
+    --warning: #fbbf24;
+    --success: #34d399;
+    --ring: #60a5fa;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    @apply font-sans antialiased;
+  }
+  body {
+    @apply min-h-dvh bg-background text-foreground;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
