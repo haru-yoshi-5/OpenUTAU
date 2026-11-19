@@ -13,6 +13,7 @@ import { ExportPanel } from "./ExportPanel";
 import { FileDropZone } from "./FileDropZone";
 import { NoteTable } from "./NoteTable";
 import { ProjectSummary } from "./ProjectSummary";
+import { RenderErrorBoundary } from "./RenderErrorBoundary";
 
 // Konva を含むため、ファイルを読み込んだ後に遅延読み込みする
 const PianoRoll = lazy(() =>
@@ -30,10 +31,14 @@ function PianoRollFallback() {
 
 export function Viewer() {
   const load = useProjectStore((s) => s.load);
-  const { loadFile, loadSample } = useProjectStore.getState();
+  const { loadFile, loadSample, close } = useProjectStore.getState();
 
   if (load.status === "loaded") {
-    return <LoadedView loaded={load.loaded} roundTrip={load.roundTrip} />;
+    return (
+      <RenderErrorBoundary onReset={close}>
+        <LoadedView loaded={load.loaded} roundTrip={load.roundTrip} />
+      </RenderErrorBoundary>
+    );
   }
 
   return (
