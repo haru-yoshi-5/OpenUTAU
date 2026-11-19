@@ -1,5 +1,5 @@
-name: AI Tuning Studio デモ
-comment: AI Tuning Studio 同梱の自作デモ（メロディ・歌詞ともオリジナル）。歌声ライブラリは未指定です。
+name: KOEBIT デモ
+comment: KOEBIT 同梱の自作デモ（メロディ・歌詞ともオリジナル）。歌声ライブラリは未指定です。
 output_dir: Vocal
 cache_dir: UCache
 ustx_version: 0.10

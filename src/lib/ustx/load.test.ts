@@ -29,7 +29,7 @@ describe("loadUstx: 正常系", () => {
 
   it("プロジェクト情報を読み取れる", () => {
     const p = loaded.project;
-    expect(p.name).toBe("AI Tuning Studio デモ");
+    expect(p.name).toBe("KOEBIT デモ");
     expect(p.version.raw).toBe("0.10");
     expect(p.tempos).toEqual([
       { position: 0, bpm: 120 },
