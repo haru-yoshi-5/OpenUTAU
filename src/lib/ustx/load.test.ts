@@ -185,6 +185,53 @@ describe("loadUstx: 不正入力の拒否", () => {
     );
   });
 
+  it("位置・長さが上限を超えるノート・パート・テンポ", () => {
+    const huge = String(LIMITS.maxTick + 1);
+    const cases = [
+      // ノートの位置
+      demoText.replace("  - position: 480\n", `  - position: ${huge}\n`),
+      // ノートの長さ
+      demoText.replace("    duration: 480\n", `    duration: ${huge}\n`),
+      // パートの位置（先頭パートは position: 0 から始まる）
+      demoText.replace("  position: 0\n", `  position: ${huge}\n`),
+      // テンポの位置
+      demoText.replace("- position: 7680\n", `- position: ${huge}\n`),
+    ];
+    for (const text of cases) {
+      expect(text).not.toBe(demoText);
+      expectUstxError(() => loadUstx("a.ustx", enc(text)), "out-of-range");
+    }
+  });
+
+  it("上限ちょうどの位置は読み込める", () => {
+    const text = demoText.replace("- position: 7680\n", `- position: ${LIMITS.maxTick}\n`);
+    expect(text).not.toBe(demoText);
+    expect(() => loadUstx("a.ustx", enc(text))).not.toThrow();
+  });
+
+  it("拍子の分子・分母が上限を超える", () => {
+    const cases = [
+      // 新形式の time_signatures
+      demoText.replace("  beat_per_bar: 4\n", `  beat_per_bar: ${LIMITS.maxBeatPerBar + 1}\n`),
+      demoText.replace("  beat_unit: 4\n", `  beat_unit: 1000000000\n`),
+      // 旧形式（v0.6 未満）はプロジェクト全体の値を使う
+      demoText
+        .replace("ustx_version: 0.10", "ustx_version: 0.5")
+        .replace("\nbeat_unit: 4\n", `\nbeat_unit: ${LIMITS.maxBeatUnit + 1}\n`),
+    ];
+    for (const text of cases) {
+      expect(text).not.toBe(demoText);
+      expectUstxError(() => loadUstx("a.ustx", enc(text)), "out-of-range");
+    }
+  });
+
+  it("上限ちょうどの拍子は読み込める", () => {
+    const text = demoText
+      .replace("  beat_per_bar: 4\n", `  beat_per_bar: ${LIMITS.maxBeatPerBar}\n`)
+      .replace("  beat_unit: 4\n", `  beat_unit: ${LIMITS.maxBeatUnit}\n`);
+    expect(() => loadUstx("a.ustx", enc(text))).not.toThrow();
+  });
+
   it("解釈できないバージョン表記", () => {
     expectUstxError(
       () => loadUstx("a.ustx", enc(demoText.replace("ustx_version: 0.10", "ustx_version: latest"))),

@@ -10,6 +10,7 @@ export type UstxErrorCode =
   | "not-ustx"
   | "invalid-structure"
   | "too-many-items"
+  | "out-of-range"
   | "unsupported-version"
   | "export-blocked";
 

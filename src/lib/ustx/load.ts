@@ -35,6 +35,17 @@ export const LIMITS = {
   maxNotes: 100_000,
   maxCurvePoints: 2_000_000,
   maxTempos: 10_000,
+  /**
+   * 位置・長さとして扱う tick の絶対値の上限（4/4 拍子で約 2,000 小節、120 BPM で約 69 分）。
+   * ピッチ計算や小節線の計算は曲の長さに比例して配列を確保するため、極端な値でブラウザが止まるのを防ぐ
+   */
+  maxTick: 4_000_000,
+  /**
+   * 拍子の分子・分母の上限。小節線の計算は「1 小節の長さ」で刻むため、
+   * 分母が極端に大きい（1 小節がほぼ 0 tick）・分子が極端に大きいとループが終わらなくなる
+   */
+  maxBeatPerBar: 64,
+  maxBeatUnit: 64,
 } as const;
 
 /**
@@ -248,6 +259,8 @@ function buildProject(raw: RawProject, version: UstxVersion, warnings: string[])
     throw new UstxError("too-many-items", "カーブのデータ量が上限を超えています。");
   }
 
+  assertTicksInRange(raw);
+
   const legacy = compareVersion(version, TEMPO_MAP_SINCE) < 0;
   if (legacy) {
     warnings.push(
@@ -269,6 +282,7 @@ function buildProject(raw: RawProject, version: UstxVersion, warnings: string[])
             beat_unit: raw.beat_unit,
           },
         ];
+  assertTimeSignaturesInRange(timeSignatures);
 
   const voiceParts: VoicePart[] = raw.voice_parts.map((part, partIndex) => {
     const curves = part.curves.filter((curve) => {
@@ -312,6 +326,46 @@ function buildProject(raw: RawProject, version: UstxVersion, warnings: string[])
     wavePartCount: raw.wave_parts.length,
     noteCount,
   };
+}
+
+/** パート・ノート・テンポの位置（プロジェクト先頭からの絶対 tick）が上限内かを確認する */
+function assertTicksInRange(raw: RawProject): void {
+  const inRange = (tick: number) => Math.abs(tick) <= LIMITS.maxTick;
+  const fail = (detail: string) => {
+    throw new UstxError(
+      "out-of-range",
+      "ノートやパートの位置・長さが、対応している範囲（約 2,000 小節）を超えています。",
+      detail,
+    );
+  };
+  for (const part of raw.voice_parts) {
+    if (!inRange(part.position) || !inRange(part.position + part.duration)) {
+      fail(`パート「${part.name}」`);
+    }
+    for (const note of part.notes) {
+      const start = part.position + note.position;
+      if (!inRange(start) || !inRange(start + note.duration)) {
+        fail(`パート「${part.name}」の ${note.position} tick のノート`);
+      }
+    }
+  }
+  for (const tempo of raw.tempos ?? []) {
+    if (!inRange(tempo.position)) fail(`${tempo.position} tick のテンポ`);
+  }
+}
+
+/** 拍子（旧形式ではプロジェクト全体の拍子）が上限内かを確認する */
+function assertTimeSignaturesInRange(timeSignatures: readonly TimeSignature[]): void {
+  for (const sig of timeSignatures) {
+    if (sig.beat_per_bar > LIMITS.maxBeatPerBar || sig.beat_unit > LIMITS.maxBeatUnit) {
+      throw new UstxError(
+        "out-of-range",
+        `拍子の値が、対応している範囲（分子・分母とも ${LIMITS.maxBeatPerBar} まで）を超えています。`,
+        // bar_position は 0 始まり。画面の小節番号（1 始まり）に合わせる
+        `${sig.bar_position + 1} 小節目の拍子 ${sig.beat_per_bar}/${sig.beat_unit}`,
+      );
+    }
+  }
 }
 
 function formatZodIssue(error: z.ZodError): string {
