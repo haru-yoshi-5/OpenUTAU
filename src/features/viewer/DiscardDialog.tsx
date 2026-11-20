@@ -22,7 +22,12 @@ export function DiscardDialog({ open, editCount, onConfirm, onCancel }: DiscardD
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
+    if (open && !dialog.open) {
+      dialog.showModal();
+      // 誤操作で消さないよう、ボタンの並び順に関係なく、最初のフォーカスは「キャンセル」に置く。
+      // React の autoFocus はマウント時（ダイアログが閉じていてフォーカスできないとき）にしか働かない
+      dialog.querySelector<HTMLElement>("[data-initial-focus]")?.focus();
+    }
     if (!open && dialog.open) dialog.close();
   }, [open]);
 
@@ -47,9 +52,7 @@ export function DiscardDialog({ open, editCount, onConfirm, onCancel }: DiscardD
           残す場合は「キャンセル」を押し、「編集を反映して書き出す」で保存してください。
         </p>
         <div className="flex flex-wrap justify-end gap-2">
-          {/* 誤操作で消さないよう、最初のフォーカスはキャンセルに置く */}
-          {/* oxlint-disable-next-line jsx-a11y/no-autofocus -- モーダルを開いたときの初期フォーカス */}
-          <Button variant="outline" onClick={onCancel} autoFocus>
+          <Button variant="outline" onClick={onCancel} data-initial-focus>
             キャンセル
           </Button>
           <Button onClick={onConfirm}>破棄する</Button>

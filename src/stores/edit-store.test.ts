@@ -147,3 +147,18 @@ describe("useEditStore：元データとの比較", () => {
     );
   });
 });
+
+describe("useEditStore：多数のノートへの一括変更", () => {
+  it("索引で元のノートを引くため、全ノートへの一括変更も 1 つの操作として速く記録できる", () => {
+    store.getState().reset(source);
+    const changes = source.voiceParts.flatMap((part) =>
+      part.notes.map((note) => ({
+        key: noteKey(part.index, note.index),
+        after: { vibrato: { ...note.vibrato, length: 80 } },
+      })),
+    );
+    store.getState().apply("一括", changes);
+    expect(store.getState().edits.size).toBe(changes.length);
+    expect(store.getState().undoStack).toHaveLength(1);
+  });
+});

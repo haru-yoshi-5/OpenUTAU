@@ -50,9 +50,22 @@ export function isOutSetLast(rawVibrato: unknown): boolean {
  * in と out は合計が 100 を超えないよう、後から設定された方を優先して、先に設定された方を削る。
  * 戻り値は in + out ≤ 100 になるので、どの順序で読み込まれても OpenUtau で同じ値になる。
  */
-export function normalizeVibrato(vibrato: Vibrato, outSetLast = true): Vibrato {
+export function normalizeVibrato(
+  vibrato: Vibrato,
+  outSetLast = true,
+  /** 値が不正なときのエラー。読み込み時は構造の不正、編集時は編集の不正として報告する */
+  source: "load" | "edit" = "edit",
+): Vibrato {
   for (const [name, value] of Object.entries(vibrato)) {
-    if (!Number.isFinite(value)) invalidEdit("ビブラートに数値以外の値が含まれています。", name);
+    if (Number.isFinite(value)) continue;
+    if (source === "load") {
+      throw new UstxError(
+        "invalid-structure",
+        "USTX のビブラートに数値以外の値が含まれているため読み込めませんでした。",
+        name,
+      );
+    }
+    invalidEdit("ビブラートに数値以外の値が含まれています。", name);
   }
   let vin = clamp(vibrato.in, 0, 100);
   let vout = clamp(vibrato.out, 0, 100);

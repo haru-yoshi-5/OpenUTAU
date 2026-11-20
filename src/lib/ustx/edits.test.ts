@@ -309,3 +309,20 @@ describe("editedFileName", () => {
     expect(editedFileName("a.b.ustx")).toBe("a.b_edited.ustx");
   });
 });
+
+describe("normalizeVibrato のエラーの種類", () => {
+  const bad = { ...vibrato(), depth: Number.NaN };
+
+  it("編集時は invalid-edit、読み込み時は invalid-structure として報告する", () => {
+    const codeOf = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (e) {
+        return e instanceof UstxError ? e.code : "other";
+      }
+      return "none";
+    };
+    expect(codeOf(() => normalizeVibrato(bad))).toBe("invalid-edit");
+    expect(codeOf(() => normalizeVibrato(bad, true, "load"))).toBe("invalid-structure");
+  });
+});

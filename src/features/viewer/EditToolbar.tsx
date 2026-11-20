@@ -30,6 +30,8 @@ export function EditToolbar() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || isTextInput(e.target)) return;
+      // モーダル（破棄の確認など）を開いている間は、背後の編集を変えない
+      if (document.querySelector("dialog[open]")) return;
       const key = e.key.toLowerCase();
       if (key === "z" && !e.shiftKey) {
         e.preventDefault();

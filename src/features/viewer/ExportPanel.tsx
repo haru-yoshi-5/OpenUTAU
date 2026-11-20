@@ -2,25 +2,17 @@ import { CheckCircle2, Download, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../components/ui/button";
 import { downloadBytes } from "../../lib/download";
-import { type EditMap, editedFileName, exportEdited } from "../../lib/ustx/edits";
-import { UstxError } from "../../lib/ustx/errors";
+import { type EditMap, editedFileName } from "../../lib/ustx/edits";
 import { exportUnchanged } from "../../lib/ustx/export";
 import type { LoadedUstx } from "../../lib/ustx/load";
 import { useEditStore } from "../../stores/edit-store";
 import type { RoundTripStatus } from "../../stores/project-store";
+import { downloadEdited, exportErrorMessage } from "./export-actions";
 
 interface ExportPanelProps {
   loaded: LoadedUstx;
   roundTrip: RoundTripStatus;
 }
-
-/** 編集版を書き出す。失敗すると UstxError などを投げる（描画エラー時の代替画面からも使う） */
-export function downloadEdited(loaded: LoadedUstx, edits: EditMap) {
-  downloadBytes(exportEdited(loaded, edits), editedFileName(loaded.fileName));
-}
-
-export const exportErrorMessage = (e: unknown) =>
-  e instanceof UstxError ? e.message : "書き出し中に予期しないエラーが発生しました。";
 
 export function ExportPanel({ loaded, roundTrip }: ExportPanelProps) {
   const edits = useEditStore((s) => s.edits);

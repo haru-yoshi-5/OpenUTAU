@@ -317,6 +317,7 @@ function buildProject(
           vibrato: normalizeVibrato(
             note.vibrato,
             isOutSetLast(js.voice_parts?.[partIndex]?.notes?.[index]?.vibrato),
+            "load",
           ),
           index,
         }))
