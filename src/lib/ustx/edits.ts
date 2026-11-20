@@ -3,7 +3,8 @@ import { isDeepStrictEqual } from "./deep-equal";
 import { UstxError } from "./errors";
 import { exportUnchanged, serializeVerified } from "./export";
 import type { LoadedUstx, Note, Project } from "./load";
-import type { PitchPoint, RawNote, Vibrato } from "./types";
+import { normalizePitch, normalizeVibrato } from "./normalize";
+import type { RawNote, Vibrato } from "./types";
 
 /**
  * ノートへの編集差分。元の YAML 文書は書き換えず、書き出すときに複製した文書へ当てる。
@@ -27,55 +28,11 @@ export function parseNoteKey(key: NoteKey): { partIndex: number; noteIndex: numb
   return { partIndex, noteIndex };
 }
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+export { DEFAULT_VIBRATO_LENGTH, normalizePitch, normalizeVibrato } from "./normalize";
 
 function invalidEdit(message: string, detail?: string): never {
   throw new UstxError("invalid-edit", message, detail);
 }
-
-/**
- * OpenUtau（UPitch）が前提とする形にそろえる。
- * - 読み込み時にソートされず、補間は x の昇順を前提にしているため、x の昇順に並べる
- * - snap_first が有効なとき、OpenUtau は先頭の点を無条件に参照するため、0 点を許さない
- */
-export function normalizePitch(pitch: RawNote["pitch"]): RawNote["pitch"] {
-  const data: PitchPoint[] = pitch.data.map(({ x, y, shape }) => {
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      invalidEdit("ピッチ点の位置・高さに数値以外の値が含まれています。");
-    }
-    return { x, y, shape };
-  });
-  if (pitch.snap_first && data.length === 0) {
-    invalidEdit("ピッチ点をすべて削除することはできません（OpenUtau で開けなくなるため）。");
-  }
-  // Array.prototype.sort は安定ソートなので、同じ x の点は元の順序を保つ
-  data.sort((a, b) => a.x - b.x);
-  return { data, snap_first: pitch.snap_first };
-}
-
-/**
- * OpenUtau（UVibrato）のセッターと同じ範囲に丸める。
- * in と out は「in を設定 → out を設定」の順で丸められ、最終的に in + out ≤ 100 になる。
- */
-export function normalizeVibrato(vibrato: Vibrato): Vibrato {
-  for (const [name, value] of Object.entries(vibrato)) {
-    if (!Number.isFinite(value)) invalidEdit("ビブラートに数値以外の値が含まれています。", name);
-  }
-  const out = clamp(vibrato.out, 0, 100);
-  return {
-    length: clamp(vibrato.length, 0, 100),
-    period: clamp(vibrato.period, 5, 500),
-    depth: clamp(vibrato.depth, 5, 200),
-    in: Math.min(clamp(vibrato.in, 0, 100), 100 - out),
-    out,
-    shift: clamp(vibrato.shift, 0, 100),
-    drift: clamp(vibrato.drift, -100, 100),
-    vol_link: clamp(vibrato.vol_link, -100, 100),
-  };
-}
-
-/** OpenUtau でビブラートをオンにしたときの長さ（NotePresets.DefaultVibrato.VibratoLength） */
-export const DEFAULT_VIBRATO_LENGTH = 75;
 
 export function normalizeEdit(edit: NoteEdit): NoteEdit {
   return {
@@ -84,17 +41,25 @@ export function normalizeEdit(edit: NoteEdit): NoteEdit {
   };
 }
 
+/** ピッチ点を正規化した形で比べる。元データが正規化できない（0 点など）なら、一致しないとみなす */
+function samePitch(a: RawNote["pitch"], original: RawNote["pitch"]): boolean {
+  try {
+    return isDeepStrictEqual(a, normalizePitch(original)) === null;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * 今の差分に patch を重ねた、新しい差分を返す。
- * 元データと同じ値に戻った項目は差分から外し、何も残らなければ undefined（＝元データのまま）を返す。
+ * 差分を正規化し、元データと同じ値の項目を外す。何も残らなければ undefined（＝元データのまま）を返す。
+ * 元データのビブラートは読み込み時に OpenUtau と同じ解釈へそろえてあるので、そのまま比べられる。
  */
-export function mergeNoteEdit(
+export function pruneEdit(
   original: Pick<RawNote, "pitch" | "vibrato">,
-  current: NoteEdit | undefined,
-  patch: NoteEdit,
+  edit: NoteEdit,
 ): NoteEdit | undefined {
-  const next: NoteEdit = { ...current, ...normalizeEdit(patch) };
-  if (next.pitch && isDeepStrictEqual(next.pitch, original.pitch) === null) delete next.pitch;
+  const next = normalizeEdit(edit);
+  if (next.pitch && samePitch(next.pitch, original.pitch)) delete next.pitch;
   if (next.vibrato && isDeepStrictEqual(next.vibrato, original.vibrato) === null) {
     delete next.vibrato;
   }

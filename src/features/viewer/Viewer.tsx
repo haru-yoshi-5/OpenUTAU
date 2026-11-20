@@ -7,7 +7,6 @@ import { computeBars } from "../../lib/ustx/bars";
 import {
   applyEditsToProject,
   DEFAULT_VIBRATO_LENGTH,
-  mergeNoteEdit,
   noteKey,
   parseNoteKey,
 } from "../../lib/ustx/edits";
@@ -141,9 +140,8 @@ function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: Roun
         : DEFAULT_VIBRATO_LENGTH
       : 0;
     try {
-      const after = mergeNoteEdit(source, edits.get(key), {
-        vibrato: { ...note.vibrato, length },
-      });
+      // 元データと同じ値に戻った項目は、ストアが差分から外す
+      const after = { ...edits.get(key), vibrato: { ...note.vibrato, length } };
       useEditStore
         .getState()
         .apply(enabled ? "ビブラートをオンにする" : "ビブラートをオフにする", [{ key, after }]);

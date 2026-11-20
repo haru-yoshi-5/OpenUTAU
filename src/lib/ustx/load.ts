@@ -12,6 +12,7 @@ import {
 } from "yaml";
 import type { z } from "zod";
 import { UstxError } from "./errors";
+import { isOutSetLast, normalizeVibrato } from "./normalize";
 import {
   type Curve,
   projectSchema,
@@ -171,7 +172,8 @@ export function loadUstx(fileName: string, bytes: Uint8Array): LoadedUstx {
     exportable = false;
   }
 
-  const parsed = projectSchema.safeParse(doc.toJS({ maxAliasCount: 0 }));
+  const js = doc.toJS({ maxAliasCount: 0 });
+  const parsed = projectSchema.safeParse(js);
   if (!parsed.success) {
     throw new UstxError(
       "invalid-structure",
@@ -179,7 +181,7 @@ export function loadUstx(fileName: string, bytes: Uint8Array): LoadedUstx {
       formatZodIssue(parsed.error),
     );
   }
-  const project = buildProject(parsed.data, version, warnings);
+  const project = buildProject(parsed.data, version, warnings, js as RawJs);
 
   return {
     fileName,
@@ -243,7 +245,15 @@ export function readVersion(doc: Document.Parsed, text: string): UstxVersion {
   return version;
 }
 
-function buildProject(raw: RawProject, version: UstxVersion, warnings: string[]): Project {
+/** スキーマを通す前の生データ。Zod はキーの順序を保たないため、ビブラートのキー順はこちらから読む */
+type RawJs = { voice_parts?: { notes?: { vibrato?: unknown }[] }[] };
+
+function buildProject(
+  raw: RawProject,
+  version: UstxVersion,
+  warnings: string[],
+  js: RawJs,
+): Project {
   if (raw.voice_parts.length > LIMITS.maxVoiceParts) {
     throw new UstxError("too-many-items", "パート数が上限を超えています。");
   }
@@ -302,6 +312,12 @@ function buildProject(raw: RawProject, version: UstxVersion, warnings: string[])
         .map((note, index) => ({
           ...note,
           duration: Math.max(10, note.duration),
+          // OpenUtau は読み込み時にビブラートの値を丸める（in と out は YAML のキー順で優先度が決まる）。
+          // 表示と編集の基準を OpenUtau の解釈にそろえる
+          vibrato: normalizeVibrato(
+            note.vibrato,
+            isOutSetLast(js.voice_parts?.[partIndex]?.notes?.[index]?.vibrato),
+          ),
           index,
         }))
         .sort((a, b) => a.position - b.position || a.index - b.index),

@@ -6,7 +6,7 @@ import {
   editedFileName,
   type EditMap,
   exportEdited,
-  mergeNoteEdit,
+  pruneEdit,
   type NoteEdit,
   noteKey,
   normalizePitch,
@@ -198,23 +198,107 @@ describe("exportEdited", () => {
   });
 });
 
-describe("mergeNoteEdit", () => {
+describe("pruneEdit", () => {
   const original = load().project.voiceParts[0].notes[0];
 
-  it("今の差分に重ね、元データと異なる項目だけを差分として残す", () => {
-    const merged = mergeNoteEdit(original, undefined, { vibrato: vibrato({ length: 60 }) });
-    expect(merged).toEqual({ vibrato: vibrato({ length: 60 }) });
+  it("元データと異なる項目だけを、正規化して差分として残す", () => {
+    expect(pruneEdit(original, { vibrato: vibrato({ length: 60, period: 9999 }) })).toEqual({
+      vibrato: vibrato({ length: 60, period: 500 }),
+    });
   });
 
-  it("元データと同じ値に戻した項目は差分から外し、何も残らなければ undefined を返す", () => {
-    const current = { vibrato: vibrato({ length: 60 }) };
-    expect(mergeNoteEdit(original, current, { vibrato: original.vibrato })).toBeUndefined();
-  });
-
-  it("別の項目の差分は保つ", () => {
+  it("元データと同じ値の項目は外し、何も残らなければ undefined を返す", () => {
+    expect(pruneEdit(original, { vibrato: original.vibrato })).toBeUndefined();
     const pitch = { snap_first: true, data: [{ x: -10, y: 0, shape: "io" as const }] };
-    const merged = mergeNoteEdit(original, { pitch }, { vibrato: original.vibrato });
-    expect(merged).toEqual({ pitch });
+    expect(pruneEdit(original, { pitch, vibrato: original.vibrato })).toEqual({ pitch });
+  });
+
+  it("元データのピッチ点が昇順でなくても、並べ替えると同じなら差分にしない", () => {
+    const unsorted = {
+      ...original,
+      pitch: { snap_first: true, data: [...original.pitch.data].reverse() },
+    };
+    expect(pruneEdit(unsorted, { pitch: original.pitch })).toBeUndefined();
+  });
+
+  it("元データのビブラートが範囲外でも、読み込み時に丸めた値と同じなら差分にしない", () => {
+    const text = demoText.replace(
+      "    vibrato: {length: 0, period: 175,",
+      "    vibrato: {length: 0, period: 1000,",
+    );
+    const note = load(text).project.voiceParts[0].notes[0];
+    expect(note.vibrato.period).toBe(500);
+    expect(pruneEdit(note, { vibrato: { ...note.vibrato } })).toBeUndefined();
+  });
+});
+
+describe("ビブラートの in / out の解釈（OpenUtau はキーの順にセッターを呼ぶ）", () => {
+  const firstNoteVibrato = (vibratoLine: string) =>
+    load(
+      demoText.replace(
+        "    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10,",
+        `    vibrato: ${vibratoLine}`,
+      ),
+    ).project.voiceParts[0].notes[0].vibrato;
+
+  it("in → out の順なら、合計が 100 を超えた分を in から削る", () => {
+    const v = firstNoteVibrato("{length: 50, period: 175, depth: 25, in: 80, out: 50,");
+    expect([v.in, v.out]).toEqual([50, 50]);
+  });
+
+  it("out → in の順なら、合計が 100 を超えた分を out から削る", () => {
+    const v = firstNoteVibrato("{length: 50, period: 175, depth: 25, out: 50, in: 80,");
+    expect([v.in, v.out]).toEqual([80, 20]);
+  });
+
+  it("書き出した値は合計が 100 以下になり、キーの順に関係なく同じ値で読み込まれる", () => {
+    const text = demoText.replace(
+      "    vibrato: {length: 0, period: 175, depth: 25, in: 10, out: 10,",
+      "    vibrato: {length: 50, period: 175, depth: 25, out: 50, in: 80,",
+    );
+    const loaded = load(text);
+    const v = loaded.project.voiceParts[0].notes[0].vibrato;
+    const out = exportEdited(loaded, edits([[noteKey(0, 0), { vibrato: { ...v, depth: 30 } }]]));
+    const reloaded = loadUstx("a.ustx", out).project.voiceParts[0].notes[0].vibrato;
+    expect(reloaded).toMatchObject({ in: 80, out: 20, depth: 30 });
+  });
+});
+
+describe("pitch・vibrato の行が無いノートへの書き出し", () => {
+  // OpenUtau は欠けたフィールドを既定値で補うため、このようなノートも正当に存在しうる
+  const lines = demoText.split("\n");
+  const at = lines.indexOf("    lyric: そ");
+  const removed = [...lines.slice(0, at + 1), ...lines.slice(at + 7)].join("\n");
+
+  it("前提：先頭ノートの pitch と vibrato の行を取り除いている", () => {
+    expect(lines.slice(at + 1, at + 7).join("\n")).toMatch(/^ {4}pitch:[\s\S]*\n {4}vibrato: /);
+    expect(load(removed).project.voiceParts[0].notes[0].pitch.data).toEqual([]);
+  });
+
+  it("新しいノードを作って書き出し、読み込み直すと差分どおりになる", () => {
+    const loaded = load(removed);
+    const pitch = {
+      snap_first: true,
+      data: [
+        { x: -30, y: 0, shape: "io" as const },
+        { x: 30, y: 0, shape: "io" as const },
+      ],
+    };
+    const v = vibrato({ length: 75 });
+    const out = dec(exportEdited(loaded, edits([[noteKey(0, 0), { pitch, vibrato: v }]])));
+    expect(out).toContain(
+      [
+        "    pitch:",
+        "      data:",
+        "      - {x: -30, y: 0, shape: io}",
+        "      - {x: 30, y: 0, shape: io}",
+        "      snap_first: true",
+        `    vibrato: {length: 75, period: 175, depth: 25, in: 10, out: 10, shift: 0, drift: 0, vol_link: 0}`,
+      ].join("\n"),
+    );
+    const note = loadUstx("a.ustx", enc(out)).project.voiceParts[0].notes[0];
+    expect(note.pitch).toEqual(pitch);
+    expect(note.vibrato).toEqual(v);
   });
 });
 

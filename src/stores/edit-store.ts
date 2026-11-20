@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { isDeepStrictEqual } from "../lib/ustx/deep-equal";
-import { type EditMap, type NoteEdit, type NoteKey, normalizeEdit } from "../lib/ustx/edits";
+import {
+  type EditMap,
+  type NoteEdit,
+  type NoteKey,
+  parseNoteKey,
+  pruneEdit,
+} from "../lib/ustx/edits";
+import { UstxError } from "../lib/ustx/errors";
+import type { Project } from "../lib/ustx/load";
 
 /** 取り消せる操作の数。古いものから捨てる */
 export const HISTORY_LIMIT = 200;
@@ -23,19 +31,30 @@ export interface EditCommand {
 }
 
 interface EditState {
+  /** 差分の基準になる、読み込んだときのプロジェクト */
+  source: Project | null;
   edits: EditMap;
   undoStack: EditCommand[];
   redoStack: EditCommand[];
   /**
-   * 差分を変更し、1 回の Undo で戻せる操作として記録する。
-   * 値は OpenUtau と同じ範囲に正規化する（不正な差分は UstxError を投げ、何も変えない）。
+   * 差分を変更し、1 回の Undo で戻せる操作として記録する。after にはそのノートの差分全体を渡す。
+   * - 値は OpenUtau と同じ範囲に正規化する
+   * - 元データと同じ値の項目は差分から外す（どの画面から呼んでも「編集済み」が正しくなるように）
+   * - 不正な差分・存在しないノートへの差分は UstxError を投げ、何も変えない
    * 実際に変わるノートが無ければ何も記録しない。
    */
   apply: (label: string, changes: readonly EditChange[]) => void;
   undo: () => void;
   redo: () => void;
-  /** ファイルを読み込み直したとき・破棄したときに、差分と履歴を捨てる */
-  reset: () => void;
+  /** ファイルを読み込んだとき（source を渡す）・破棄したとき（null）に、差分と履歴を捨てる */
+  reset: (source: Project | null) => void;
+}
+
+function findOriginalNote(source: Project, key: NoteKey) {
+  const { partIndex, noteIndex } = parseNoteKey(key);
+  const note = source.voiceParts[partIndex]?.notes.find((n) => n.index === noteIndex);
+  if (!note) throw new UstxError("invalid-edit", "編集対象のノートが見つかりません。", key);
+  return note;
 }
 
 function withChanges(
@@ -53,17 +72,18 @@ function withChanges(
 }
 
 export const useEditStore = create<EditState>()((set, get) => ({
+  source: null,
   edits: new Map(),
   undoStack: [],
   redoStack: [],
 
   apply: (label, changes) => {
-    const { edits, undoStack } = get();
+    const { source, edits, undoStack } = get();
+    if (!source) throw new UstxError("invalid-edit", "編集できるファイルが読み込まれていません。");
     const applied: AppliedChange[] = [];
     for (const { key, after } of changes) {
-      const normalized = after && normalizeEdit(after);
-      const empty = !normalized || (!normalized.pitch && !normalized.vibrato);
-      const next = empty ? undefined : normalized;
+      const original = findOriginalNote(source, key);
+      const next = after && pruneEdit(original, after);
       const before = edits.get(key);
       if (isDeepStrictEqual(before, next) === null) continue;
       applied.push({ key, before, after: next });
@@ -98,5 +118,5 @@ export const useEditStore = create<EditState>()((set, get) => ({
     });
   },
 
-  reset: () => set({ edits: new Map(), undoStack: [], redoStack: [] }),
+  reset: (source) => set({ source, edits: new Map(), undoStack: [], redoStack: [] }),
 }));

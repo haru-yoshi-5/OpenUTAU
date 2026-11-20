@@ -1,10 +1,18 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { type NoteEdit, noteKey } from "../lib/ustx/edits";
 import { UstxError } from "../lib/ustx/errors";
+import { loadUstx } from "../lib/ustx/load";
 import type { Vibrato } from "../lib/ustx/types";
 import { HISTORY_LIMIT, useEditStore } from "./edit-store";
 
 const store = useEditStore;
+// デモの先頭 2 ノート（0:0・0:1）は、ビブラートの長さが 0 で、ほかは既定値
+const source = loadUstx(
+  "demo.ustx",
+  new Uint8Array(readFileSync(join(process.cwd(), "public/samples/demo.ustx"))),
+).project;
 
 const vibrato = (length: number): Vibrato => ({
   length,
@@ -22,7 +30,7 @@ const a = noteKey(0, 0);
 const b = noteKey(0, 1);
 
 describe("useEditStore", () => {
-  beforeEach(() => store.getState().reset());
+  beforeEach(() => store.getState().reset(source));
 
   it("差分を適用し、Undo で元に戻し、Redo でやり直せる", () => {
     store.getState().apply("ビブラート", [{ key: a, after: withVibrato(75) }]);
@@ -103,8 +111,39 @@ describe("useEditStore", () => {
 
   it("reset で差分と履歴を捨てる", () => {
     store.getState().apply("設定", [{ key: a, after: withVibrato(50) }]);
-    store.getState().reset();
+    store.getState().reset(source);
     expect(store.getState()).toMatchObject({ undoStack: [], redoStack: [] });
     expect(store.getState().edits.size).toBe(0);
+  });
+});
+
+describe("useEditStore：元データとの比較", () => {
+  beforeEach(() => store.getState().reset(source));
+
+  it("元データと同じ値に戻す変更は、差分を消す操作として記録する", () => {
+    store.getState().apply("オン", [{ key: a, after: withVibrato(75) }]);
+    // デモの先頭ノートは元々 length: 0
+    store.getState().apply("オフ", [{ key: a, after: withVibrato(0) }]);
+    expect(store.getState().edits.has(a)).toBe(false);
+    expect(store.getState().undoStack).toHaveLength(2);
+  });
+
+  it("元データと同じ値だけの変更は、何も記録しない", () => {
+    store.getState().apply("同じ値", [{ key: a, after: withVibrato(0) }]);
+    expect(store.getState().undoStack).toEqual([]);
+  });
+
+  it("存在しないノートへの変更は例外にして、状態を変えない", () => {
+    expect(() =>
+      store.getState().apply("不明", [{ key: noteKey(0, 999), after: withVibrato(75) }]),
+    ).toThrow(UstxError);
+    expect(store.getState().edits.size).toBe(0);
+  });
+
+  it("ファイルを読み込んでいないときは編集できない", () => {
+    store.getState().reset(null);
+    expect(() => store.getState().apply("設定", [{ key: a, after: withVibrato(75) }])).toThrow(
+      UstxError,
+    );
   });
 });

@@ -66,7 +66,7 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       const roundTrip = checkRoundTrip(loaded);
       if (request !== latestRequest) return;
       // 差分は読み込んだファイルのノート番号に結び付くため、別のファイルに持ち越さない
-      useEditStore.getState().reset();
+      useEditStore.getState().reset(loaded.project);
       set({ load: { status: "loaded", loaded, roundTrip }, partIndex: 0 });
     } catch (e) {
       if (request !== latestRequest) return;
@@ -104,7 +104,7 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
 
   close: () => {
     latestRequest++;
-    useEditStore.getState().reset();
+    useEditStore.getState().reset(null);
     set({ load: { status: "idle" }, partIndex: 0 });
   },
 }));
