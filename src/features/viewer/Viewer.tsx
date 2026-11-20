@@ -17,8 +17,9 @@ import { TimeAxis } from "../../lib/ustx/time-axis";
 import { detectUnsupported } from "../../lib/ustx/unsupported";
 import { useEditStore } from "../../stores/edit-store";
 import { type RoundTripStatus, useProjectStore } from "../../stores/project-store";
+import { DiscardDialog } from "./DiscardDialog";
 import { EditToolbar } from "./EditToolbar";
-import { ExportPanel } from "./ExportPanel";
+import { downloadEdited, ExportPanel, exportErrorMessage } from "./ExportPanel";
 import { FileDropZone } from "./FileDropZone";
 import { NoteTable } from "./NoteTable";
 import { ProjectSummary } from "./ProjectSummary";
@@ -43,11 +44,7 @@ export function Viewer() {
   const { loadFile, loadSample, close } = useProjectStore.getState();
 
   if (load.status === "loaded") {
-    return (
-      <RenderErrorBoundary onReset={close}>
-        <LoadedView loaded={load.loaded} roundTrip={load.roundTrip} />
-      </RenderErrorBoundary>
-    );
+    return <LoadedRoot loaded={load.loaded} roundTrip={load.roundTrip} onClose={close} />;
   }
 
   return (
@@ -67,10 +64,68 @@ export function Viewer() {
   );
 }
 
-function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: RoundTripStatus }) {
+interface LoadedProps {
+  loaded: LoadedUstx;
+  roundTrip: RoundTripStatus;
+}
+
+/**
+ * 読み込み後の画面の外枠。編集を失わないための処理（破棄の確認・ページ離脱の警告）は、
+ * 表示でエラーが起きても働くよう、ErrorBoundary の外に置く
+ */
+function LoadedRoot({ loaded, roundTrip, onClose }: LoadedProps & { onClose: () => void }) {
+  const editCount = useEditStore((s) => s.edits.size);
+  const canUndo = useEditStore((s) => s.undoStack.length > 0);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const hasEdits = editCount > 0;
+
+  // 編集が残っているときにページを閉じる・再読み込みすると、ブラウザ標準の確認を出す
+  useEffect(() => {
+    if (!hasEdits) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // 古いブラウザは returnValue の設定で確認を出す
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasEdits]);
+
+  const requestDiscard = () => {
+    if (hasEdits) setConfirmingDiscard(true);
+    else onClose();
+  };
+  const canExportEdits = hasEdits && loaded.exportable && roundTrip.ok;
+
+  return (
+    <>
+      <RenderErrorBoundary
+        onDiscard={requestDiscard}
+        onUndo={canUndo ? () => useEditStore.getState().undo() : undefined}
+        onExport={
+          canExportEdits ? () => downloadEdited(loaded, useEditStore.getState().edits) : undefined
+        }
+        exportErrorMessage={exportErrorMessage}
+      >
+        <LoadedView loaded={loaded} roundTrip={roundTrip} onDiscard={requestDiscard} />
+      </RenderErrorBoundary>
+      <DiscardDialog
+        open={confirmingDiscard}
+        editCount={editCount}
+        onCancel={() => setConfirmingDiscard(false)}
+        onConfirm={() => {
+          setConfirmingDiscard(false);
+          onClose();
+        }}
+      />
+    </>
+  );
+}
+
+function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard: () => void }) {
   const original = loaded.project;
   const partIndex = useProjectStore((s) => s.partIndex);
-  const { selectPart, close } = useProjectStore.getState();
+  const { selectPart } = useProjectStore.getState();
   const edits = useEditStore((s) => s.edits);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -102,32 +157,6 @@ function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: Roun
     return set;
   }, [edits, partIndex]);
 
-  const hasEdits = edits.size > 0;
-
-  // 編集が残っているときにページを閉じる・再読み込みすると、ブラウザ標準の確認を出す
-  useEffect(() => {
-    if (!hasEdits) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      // 古いブラウザは returnValue の設定で確認を出す
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [hasEdits]);
-
-  const discard = () => {
-    if (
-      hasEdits &&
-      !window.confirm(
-        `${edits.size} 個のノートの編集は、まだ書き出していません。破棄してよろしいですか？\n（書き出す場合は「キャンセル」を押し、「編集を反映して書き出す」を使ってください）`,
-      )
-    ) {
-      return;
-    }
-    close();
-  };
-
   const toggleVibrato = (note: Note, enabled: boolean) => {
     setEditError(null);
     const key = noteKey(partIndex, note.index);
@@ -156,7 +185,7 @@ function LoadedView({ loaded, roundTrip }: { loaded: LoadedUstx; roundTrip: Roun
         title={project.name}
         description={project.comment || undefined}
         action={
-          <Button variant="ghost" size="sm" onClick={discard}>
+          <Button variant="ghost" size="sm" onClick={onDiscard}>
             <Trash2 aria-hidden />
             データを破棄
           </Button>
