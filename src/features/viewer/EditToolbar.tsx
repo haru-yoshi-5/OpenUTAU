@@ -16,6 +16,19 @@ function isTextInput(target: EventTarget | null): boolean {
   );
 }
 
+/**
+ * モーダルのダイアログ（破棄の確認など）が開いているか。
+ * :modal に対応していないブラウザ（Safari 15.4〜15.5 など）では querySelector が例外になるため、
+ * そのときは開いている dialog があるかで判定する
+ */
+function isModalOpen(): boolean {
+  try {
+    return document.querySelector("dialog:modal") !== null;
+  } catch {
+    return document.querySelector("dialog[open]") !== null;
+  }
+}
+
 /** 取り消し・やり直しのボタンと、Ctrl（⌘）+Z / Ctrl（⌘）+Shift+Z / Ctrl+Y のショートカット */
 export function EditToolbar() {
   const { editCount, undoLabel, redoLabel } = useEditStore(
@@ -32,7 +45,7 @@ export function EditToolbar() {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || isTextInput(e.target)) return;
       // モーダル（破棄の確認など）を開いている間は、背後の編集を変えない
       // （モーダルでない dialog を開いたままにする画面でも、ショートカットは効くよう :modal に絞る）
-      if (document.querySelector("dialog:modal")) return;
+      if (isModalOpen()) return;
       const key = e.key.toLowerCase();
       if (key === "z" && !e.shiftKey) {
         e.preventDefault();
