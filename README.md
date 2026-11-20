@@ -15,7 +15,9 @@ OpenUtau で作成したプロジェクトファイル（USTX）をブラウザ�
 
 USTX ファイルはブラウザ内だけで処理し、外部のサーバーへは送信しません。
 
-## 現在の範囲（Phase 1：USTX ビューア）
+## 現在の機能
+
+Phase 1（USTX ビューア）が完成し、Phase 2（調声機能）を作っています。
 
 - **USTX の読み込みと検証**
   - 拡張子、サイズ（20MB まで）、UTF-8、YAML の構文と構造を検証します。
@@ -32,7 +34,13 @@ USTX ファイルはブラウザ内だけで処理し、外部のサーバーへ
   - ノート、歌詞、小節、テンポ、ピッチカーブを Canvas に描画します。
   - ドラッグ・ホイール・キーボードで移動し、拡大・縮小できます。
   - 画面に見えている範囲だけを描画します。
-- **無変更での書き出し**：読み込んだときのバイト列をそのまま出力します。
+- **編集と取り消し（Phase 2 で作成中）**
+  - ノート一覧で、各ノートのビブラートをオン・オフできます。
+  - 元に戻す・やり直すは、ボタンと Ctrl（⌘）+Z / Ctrl（⌘）+Shift+Z で操作できます。
+  - 編集はノートごとの差分として持ち、元のデータは書き換えません。
+- **書き出し**
+  - 編集が無いときは、読み込んだときのバイト列をそのまま出力します。
+  - 編集があるときは、差分を当てたファイルを `◯◯_edited.ustx` として出力します。ピッチ点の並び順やビブラートの値の範囲は、OpenUtau の仕様に合わせます。
 - **互換性チェック**
   - 再シリアライズした結果を読み込み直し、元データと一致するかを検証します。
   - 一致しない場合は出力を止めます。
@@ -58,17 +66,19 @@ OpenUtau の `RenderPhrase` と同じ順序で重ねます。
 | 描画           | Konva + react-konva                                              |
 | 状態管理       | Zustand                                                          |
 | USTX 解析      | `yaml`（Document API で元の構造を保持）+ Zod                     |
+| E2E テスト     | Playwright（インストール済みの Google Chrome を使用）            |
 
 ### ディレクトリ構成
 
 ```text
 src/
 ├── lib/ustx/            USTX の読み込み・書き出し・ピッチ計算（フレームワーク非依存）
-├── stores/              Zustand ストア（プロジェクト・表示状態）
+├── stores/              Zustand ストア（プロジェクト・表示状態・編集と Undo/Redo）
 ├── features/
 │   ├── piano-roll/      Konva のピアノロールと座標計算
 │   └── viewer/          ビューア画面
 └── components/ui/       ボタン・カード・警告表示などの共通部品
+e2e/                     Playwright の E2E テスト（編集・書き出し・破棄の確認など）
 ```
 
 ## 開発
@@ -80,18 +90,28 @@ npm install
 npm run dev      # vp dev：開発サーバー（http://localhost:5173）
 npm run check    # vp check：フォーマット・lint・型チェック
 npm test         # vp test：ユニットテスト
+npm run test:e2e # Playwright：画面の E2E テスト（開発サーバーを自動で起動）
 npm run build    # vp build：本番ビルド（dist/）
 ```
+
+E2E テストは、インストール済みの Google Chrome で動かします。Chrome が無い環境では、`npx playwright install chromium` で Playwright 用のブラウザを入れ、`playwright.config.ts` の `channel` を外してください。
 
 `public/samples/demo.ustx` は、メロディと歌詞を自作したデモ用サンプルです。歌声ライブラリは指定していません。
 
 ## ロードマップ
 
 - [x] Phase 1：USTX ビューア
-- [ ] Phase 2：調声エディタ（制御点の編集、Before / After 比較、Undo / Redo、編集後の書き出し）
-- [ ] Phase 3：調声プリセット（Scoop、Fall、Vibrato、Smooth Transition、Accent）
-- [ ] Phase 4：ローカル AI による調声支援（Ollama。AI が使えなくても主要機能は動作する）
+- [ ] Phase 2：調声機能（[#6](https://github.com/haru-yoshi-5/OpenUTAU/issues/6)）
+  - [ ] 編集の土台：編集差分、Undo / Redo、編集後の書き出し
+  - [ ] 範囲選択：ノート・小節単位の選択
+  - [ ] 調声プリセット：しゃくり、フォール、オーバーシュート、ビブラート、なめらかな音程遷移と、「自然」「力強く」「切なく」の表現
+  - [ ] プリセットの適用：候補を重ねて表示し、採用・却下する
+  - [ ] 手動でのピッチ編集：ピッチ点のドラッグ・追加・削除、補間の形の切り替え
+- [ ] Phase 3：比較・検証（Before / After 比較の充実、OpenUtau との往復検証）
+- [ ] Phase 4：ローカル AI による調声支援（Ollama。AI はプリセットの種類とパラメータを提案し、AI が使えなくても主要機能は動作する）
 - [ ] Phase 5：品質改善（大規模 USTX の検証、描画性能、互換性）
+
+企画書では Phase 3 に置いていた Undo / Redo と編集後の書き出しは、編集機能と同時に必要になるため Phase 2 に前倒ししています。
 
 ## 権利・ライセンス
 

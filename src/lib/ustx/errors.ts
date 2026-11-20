@@ -12,7 +12,8 @@ export type UstxErrorCode =
   | "too-many-items"
   | "out-of-range"
   | "unsupported-version"
-  | "export-blocked";
+  | "export-blocked"
+  | "invalid-edit";
 
 /** 画面にそのまま表示できる日本語メッセージを持つ USTX 処理エラー */
 export class UstxError extends Error {

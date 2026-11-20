@@ -17,6 +17,17 @@ describe("useViewStore", () => {
     expect(s.scrollY).toBe(500 - 150);
   });
 
+  it("setContent は表示位置を保ったまま範囲を更新し、範囲外になった分だけ戻す", () => {
+    store.getState().scrollBy(240, 0);
+    const before = store.getState().scrollTick;
+    store.getState().setContent({ ...content, startTick: -240 });
+    expect(store.getState().scrollTick).toBe(before);
+    expect(store.getState().content.startTick).toBe(-240);
+
+    store.getState().setContent({ ...content, startTick: before + 100 });
+    expect(store.getState().scrollTick).toBe(before + 100);
+  });
+
   it("スクロールは内容の範囲内に収まる", () => {
     store.getState().scrollBy(-10_000, -10_000);
     expect(store.getState()).toMatchObject({ scrollTick: -120, scrollY: 0 });

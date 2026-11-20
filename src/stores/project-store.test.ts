@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { noteKey } from "../lib/ustx/edits";
+import { vibratoSchema } from "../lib/ustx/types";
+import { useEditStore } from "./edit-store";
 import { useProjectStore } from "./project-store";
+
+const vibratoDefaults = vibratoSchema.parse({});
 
 const demoBytes = new Uint8Array(readFileSync(join(process.cwd(), "public/samples/demo.ustx")));
 
@@ -68,6 +73,24 @@ describe("useProjectStore", () => {
     store.getState().selectPart(-1);
     store.getState().selectPart(0.5);
     expect(store.getState().partIndex).toBe(1);
+  });
+
+  it("別のファイルを読み込んだとき・破棄したときに、編集差分と履歴を捨てる", async () => {
+    const addEdit = () =>
+      useEditStore
+        .getState()
+        .apply("ビブラート", [
+          { key: noteKey(0, 0), after: { vibrato: { ...vibratoDefaults, length: 75 } } },
+        ]);
+    await store.getState().loadBytes("demo.ustx", async () => demoBytes);
+    addEdit();
+    await store.getState().loadBytes("demo.ustx", async () => demoBytes);
+    expect(useEditStore.getState().edits.size).toBe(0);
+    expect(useEditStore.getState().undoStack).toEqual([]);
+
+    addEdit();
+    store.getState().close();
+    expect(useEditStore.getState().edits.size).toBe(0);
   });
 
   it("close で初期状態に戻り、読み込み中の結果も反映しない", async () => {

@@ -1,38 +1,33 @@
 import { CheckCircle2, Download, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../components/ui/button";
-import { UstxError } from "../../lib/ustx/errors";
+import { downloadBytes } from "../../lib/download";
+import { type EditMap, editedFileName } from "../../lib/ustx/edits";
 import { exportUnchanged } from "../../lib/ustx/export";
 import type { LoadedUstx } from "../../lib/ustx/load";
+import { useEditStore } from "../../stores/edit-store";
 import type { RoundTripStatus } from "../../stores/project-store";
+import { downloadEdited, exportErrorMessage } from "./export-actions";
 
 interface ExportPanelProps {
   loaded: LoadedUstx;
   roundTrip: RoundTripStatus;
 }
 
-/** Blob URL を破棄するまでの待ち時間。保存ダイアログの表示などで遅れても間に合うよう長めに取る */
-const REVOKE_DELAY_MS = 40_000;
-
-function downloadBytes(bytes: Uint8Array, fileName: string) {
-  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/x-yaml" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  a.click();
-  // ダウンロードの開始は非同期のため、すぐに破棄すると保存に失敗するブラウザがある（Firefox など）
-  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
-}
-
 export function ExportPanel({ loaded, roundTrip }: ExportPanelProps) {
-  const [error, setError] = useState<string | null>(null);
+  const edits = useEditStore((s) => s.edits);
+  // エラーは、そのとき書き出そうとした編集の状態と組で持つ。編集や Undo で状態が変わったら表示しない
+  const [failure, setFailure] = useState<{ message: string; edits: EditMap } | null>(null);
+  const error = failure?.edits === edits ? failure.message : null;
+  const hasEdits = edits.size > 0;
 
-  const download = () => {
-    setError(null);
+  const download = (mode: "edited" | "original") => {
+    setFailure(null);
     try {
-      downloadBytes(exportUnchanged(loaded), loaded.fileName);
+      if (mode === "edited") downloadEdited(loaded, edits);
+      else downloadBytes(exportUnchanged(loaded), loaded.fileName);
     } catch (e) {
-      setError(e instanceof UstxError ? e.message : "書き出し中に予期しないエラーが発生しました。");
+      setFailure({ message: exportErrorMessage(e), edits });
     }
   };
 
@@ -54,10 +49,31 @@ export function ExportPanel({ loaded, roundTrip }: ExportPanelProps) {
         )}
       </p>
       <div className="flex flex-col items-start gap-1 sm:items-end">
-        <Button variant="outline" onClick={download} disabled={!loaded.exportable}>
-          <Download aria-hidden />
-          USTX を書き出す（無変更）
-        </Button>
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          {hasEdits && (
+            <Button
+              onClick={() => download("edited")}
+              // 再シリアライズで元データと一致しないファイルは、編集後の書き出しを止める
+              disabled={!loaded.exportable || !roundTrip.ok}
+            >
+              <Download aria-hidden />
+              編集を反映して書き出す
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => download("original")}
+            disabled={!loaded.exportable}
+          >
+            <Download aria-hidden />
+            {hasEdits ? "元のまま書き出す" : "USTX を書き出す（無変更）"}
+          </Button>
+        </div>
+        {hasEdits && (
+          <p className="text-xs text-muted-foreground">
+            編集版は「{editedFileName(loaded.fileName)}」として保存します。
+          </p>
+        )}
         {error && (
           <p role="alert" className="text-xs text-destructive">
             {error}
