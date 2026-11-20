@@ -6,6 +6,10 @@ dist
 dist-ssr
 *.local
 
+# E2E テストの結果
+/test-results/
+/playwright-report/
+
 # ログ
 *.log
 npm-debug.log*

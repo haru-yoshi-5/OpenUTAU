@@ -66,17 +66,19 @@ OpenUtau の `RenderPhrase` と同じ順序で重ねます。
 | 描画           | Konva + react-konva                                              |
 | 状態管理       | Zustand                                                          |
 | USTX 解析      | `yaml`（Document API で元の構造を保持）+ Zod                     |
+| E2E テスト     | Playwright（インストール済みの Google Chrome を使用）            |
 
 ### ディレクトリ構成
 
 ```text
 src/
 ├── lib/ustx/            USTX の読み込み・書き出し・ピッチ計算（フレームワーク非依存）
-├── stores/              Zustand ストア（プロジェクト・表示状態）
+├── stores/              Zustand ストア（プロジェクト・表示状態・編集と Undo/Redo）
 ├── features/
 │   ├── piano-roll/      Konva のピアノロールと座標計算
 │   └── viewer/          ビューア画面
 └── components/ui/       ボタン・カード・警告表示などの共通部品
+e2e/                     Playwright の E2E テスト（編集・書き出し・破棄の確認など）
 ```
 
 ## 開発
@@ -88,8 +90,11 @@ npm install
 npm run dev      # vp dev：開発サーバー（http://localhost:5173）
 npm run check    # vp check：フォーマット・lint・型チェック
 npm test         # vp test：ユニットテスト
+npm run test:e2e # Playwright：画面の E2E テスト（開発サーバーを自動で起動）
 npm run build    # vp build：本番ビルド（dist/）
 ```
+
+E2E テストは、インストール済みの Google Chrome で動かします。Chrome が無い環境では、`npx playwright install chromium` で Playwright 用のブラウザを入れ、`playwright.config.ts` の `channel` を外してください。
 
 `public/samples/demo.ustx` は、メロディと歌詞を自作したデモ用サンプルです。歌声ライブラリは指定していません。
 
