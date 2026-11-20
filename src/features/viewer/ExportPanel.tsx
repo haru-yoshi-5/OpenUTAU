@@ -1,8 +1,9 @@
 import { CheckCircle2, Download, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../components/ui/button";
+import { downloadBytes } from "../../lib/download";
+import { type EditMap, editedFileName, exportEdited } from "../../lib/ustx/edits";
 import { UstxError } from "../../lib/ustx/errors";
-import { editedFileName, exportEdited } from "../../lib/ustx/edits";
 import { exportUnchanged } from "../../lib/ustx/export";
 import type { LoadedUstx } from "../../lib/ustx/load";
 import { useEditStore } from "../../stores/edit-store";
@@ -13,34 +14,28 @@ interface ExportPanelProps {
   roundTrip: RoundTripStatus;
 }
 
-/** Blob URL を破棄するまでの待ち時間。保存ダイアログの表示などで遅れても間に合うよう長めに取る */
-const REVOKE_DELAY_MS = 40_000;
-
-function downloadBytes(bytes: Uint8Array, fileName: string) {
-  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/x-yaml" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  a.click();
-  // ダウンロードの開始は非同期のため、すぐに破棄すると保存に失敗するブラウザがある（Firefox など）
-  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
+/** 編集版を書き出す。失敗すると UstxError などを投げる（描画エラー時の代替画面からも使う） */
+export function downloadEdited(loaded: LoadedUstx, edits: EditMap) {
+  downloadBytes(exportEdited(loaded, edits), editedFileName(loaded.fileName));
 }
 
+export const exportErrorMessage = (e: unknown) =>
+  e instanceof UstxError ? e.message : "書き出し中に予期しないエラーが発生しました。";
+
 export function ExportPanel({ loaded, roundTrip }: ExportPanelProps) {
-  const [error, setError] = useState<string | null>(null);
   const edits = useEditStore((s) => s.edits);
+  // エラーは、そのとき書き出そうとした編集の状態と組で持つ。編集や Undo で状態が変わったら表示しない
+  const [failure, setFailure] = useState<{ message: string; edits: EditMap } | null>(null);
+  const error = failure?.edits === edits ? failure.message : null;
   const hasEdits = edits.size > 0;
 
   const download = (mode: "edited" | "original") => {
-    setError(null);
+    setFailure(null);
     try {
-      if (mode === "edited") {
-        downloadBytes(exportEdited(loaded, edits), editedFileName(loaded.fileName));
-      } else {
-        downloadBytes(exportUnchanged(loaded), loaded.fileName);
-      }
+      if (mode === "edited") downloadEdited(loaded, edits);
+      else downloadBytes(exportUnchanged(loaded), loaded.fileName);
     } catch (e) {
-      setError(e instanceof UstxError ? e.message : "書き出し中に予期しないエラーが発生しました。");
+      setFailure({ message: exportErrorMessage(e), edits });
     }
   };
 
