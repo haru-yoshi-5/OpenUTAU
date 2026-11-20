@@ -31,7 +31,8 @@ export function EditToolbar() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || isTextInput(e.target)) return;
       // モーダル（破棄の確認など）を開いている間は、背後の編集を変えない
-      if (document.querySelector("dialog[open]")) return;
+      // （モーダルでない dialog を開いたままにする画面でも、ショートカットは効くよう :modal に絞る）
+      if (document.querySelector("dialog:modal")) return;
       const key = e.key.toLowerCase();
       if (key === "z" && !e.shiftKey) {
         e.preventDefault();

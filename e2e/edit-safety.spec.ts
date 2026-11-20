@@ -110,28 +110,10 @@ test("描画中にエラーが起きても、直前の編集を取り消して�
   await openSample(page);
   await editTwoNotes(page);
 
-  // 表示で例外になる壊れた差分を、取り消せる操作としてストアに直接入れる
-  // （開発サーバーではアプリと同じモジュールを読み込めるため、同じストアを操作できる）
-  await page.evaluate(async () => {
-    // ホットリロード後は ?t=… 付きの URL で読み込まれているため、アプリが実際に使った URL を探す
-    const loaded = performance
-      .getEntriesByType("resource")
-      .map((entry) => new URL(entry.name))
-      .find((url) => url.pathname === "/src/stores/edit-store.ts");
-    const path = loaded ? loaded.pathname + loaded.search : "/src/stores/edit-store.ts";
-    const { useEditStore } = await import(/* @vite-ignore */ path);
-    const { edits, undoStack } = useEditStore.getState();
-    const broken = { pitch: { data: null, snap_first: true } };
-    const key = "0:1";
-    useEditStore.setState({
-      edits: new Map([...edits, [key, broken]]),
-      undoStack: [
-        ...undoStack,
-        { label: "壊れた編集", changes: [{ key, before: undefined, after: broken }] },
-      ],
-      redoStack: [],
-    });
-  });
+  // 表示で例外になる壊れた差分を、取り消せる操作として加える。
+  // ストアの内部には直接触れず、開発ビルドでだけ使える入口（src/dev/test-hooks.ts）を通す
+  await page.waitForFunction(() => window.__koebitTest !== undefined);
+  await page.evaluate(() => window.__koebitTest?.injectBrokenEdit("0:1"));
 
   await expect(page.getByRole("heading", { name: "表示できませんでした" })).toBeVisible();
   await expect(page.getByRole("button", { name: "編集を反映して書き出す" })).toBeVisible();
