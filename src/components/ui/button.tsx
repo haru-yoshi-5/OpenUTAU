@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, Ref } from "react";
 
 type Variant = "primary" | "outline" | "ghost";
 type Size = "sm" | "md" | "lg" | "icon";
@@ -22,6 +22,8 @@ const sizes: Record<Size, string> = {
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: Size;
+  /** React 19 では ref を props として受け取れる（そのまま button に渡す） */
+  ref?: Ref<HTMLButtonElement>;
 }
 
 export function Button({
