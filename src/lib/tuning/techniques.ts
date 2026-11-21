@@ -10,6 +10,8 @@ import type { PitchPoint, RawNote, Vibrato } from "../ustx/types";
  * - y：ノートの音高からの相対値（0.1 半音。パラメータは半音で受け取り、10 倍して点にする）
  * 先頭の点は snap_first により、直前に隙間なく続くノートとの音高差へ OpenUtau が置き換えるため、
  * y = 0 で置いておけば「前の音からつながる音程遷移」になる。
+ * 前に隙間なく続くノートが無い（フレーズの頭の）ときは、OpenUtau は先頭の点を y = 0（目標の音高）に
+ * するため、下から入るしゃくりは snap_first を外して自分で始点を置く。
  */
 
 const ms = (min: number, max: number) => z.number().finite().min(min).max(max);
@@ -79,10 +81,12 @@ const point = (x: number, y: number, shape: PitchPoint["shape"] = "io"): PitchPo
 });
 
 /**
- * ノートの入りのピッチ点。どれも「前の音からの音程遷移の点」から始まる。
+ * ノートの入りのピッチ点。前の音があるときは「前の音からの音程遷移の点」から始まる。
  * 入りの長さがノートに収まらない場合は、ノートの長さに合わせて縮める。
+ * hasPrev が false（フレーズの頭）のしゃくりは、ノートの頭で下から始めて目標の音高へ持ち上げる
+ * （この点列は snap_first を外して使う。composePitch を参照）。
  */
-export function attackPoints(attack: Attack, durationMs: number): PitchPoint[] {
+export function attackPoints(attack: Attack, durationMs: number, hasPrev = true): PitchPoint[] {
   const limit = durationMs * MAX_ATTACK_RATIO;
   switch (attack.kind) {
     case "transition": {
@@ -93,6 +97,10 @@ export function attackPoints(attack: Attack, durationMs: number): PitchPoint[] {
     case "scoop": {
       const { transitionMs, depth, lengthMs } = scoopSchema.parse(attack.params);
       const dip = Math.min(transitionMs / 2, limit / 2);
+      if (!hasPrev) {
+        // 前の音が無いので、ノートの頭で下から始めて持ち上げる（後半ほどゆっくり）
+        return [point(0, -depth * 10, "o"), point(Math.min(lengthMs, limit), 0)];
+      }
       const end = Math.min(dip + lengthMs, limit);
       // 前の音から下がった所へ移り、そこから目標の音高へ持ち上げる（後半ほどゆっくり）
       return [point(-transitionMs / 2, 0), point(dip, -depth * 10, "o"), point(end, 0)];
@@ -121,17 +129,20 @@ export function fallPoints(
 
 /**
  * 入りとフォールを組み合わせたピッチ。OpenUtau の制約（x の昇順、snap_first で 0 点にしない）を満たす。
- * fall を渡さなければフォールは付けない。
+ * fall を渡さなければフォールは付けない。hasPrev は、前に隙間なく続くノートがあるか。
  */
 export function composePitch(
   attack: Attack,
   durationMs: number,
   fall?: FallParams,
+  hasPrev = true,
 ): RawNote["pitch"] {
-  const head = attackPoints(attack, durationMs);
+  const head = attackPoints(attack, durationMs, hasPrev);
   const attackEnd = head[head.length - 1].x;
   const tail = fall ? fallPoints(fall, durationMs, attackEnd) : [];
-  return normalizePitch({ data: [...head, ...tail], snap_first: true });
+  // フレーズの頭のしゃくりは始点を自分で置くため、OpenUtau に先頭の点を書き換えさせない
+  const snapFirst = hasPrev || attack.kind !== "scoop";
+  return normalizePitch({ data: [...head, ...tail], snap_first: snapFirst });
 }
 
 /** ビブラートの値。shift・drift・vol_link など、パラメータに無い値は今のノートの値を引き継ぐ */

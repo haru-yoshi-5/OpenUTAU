@@ -12,8 +12,13 @@ import {
 
 /*
  * 表現プリセット（「自然」「力強く」「切なく」）。テクニックとパラメータの組み合わせとして定義する。
- * 強さ（0〜1）で効果を調整し、0 なら何も変えない。
  * AI（Phase 4）は、このプリセットの種類と強さを提案する役割にとどめる。
+ *
+ * 強さ（0〜1）の意味：
+ * - 効果の深さ（しゃくり・オーバーシュート・フォールの深さ、ビブラートの長さと深さ）を比例させ、
+ *   音程遷移の長さを OpenUtau の新規ノートの既定値（80ms）からプリセットの値へ近づける
+ * - 0 なら何も変えない。0 より大きければ、選んだノートのピッチ点は強さに関係なくプリセットの曲線に
+ *   置き換わる（元のピッチ点と混ぜるのではない）。手で調声した曲線を残したいノートは選ばない
  */
 
 export type ExpressionId = "natural" | "strong" | "wistful";
@@ -145,14 +150,17 @@ export function generatePresetEdits(
     if (!targets.has(note.index)) return;
     const start = partPosition + note.position;
     const durationMs = timeAxis.tickToMs(start + note.duration) - timeAxis.tickToMs(start);
+    const prev = notes[i - 1];
     const next = notes[i + 1];
+    // OpenUtau と同じく、前のノートの終わりがちょうどこのノートの頭のときだけ「つながっている」とみなす
+    const hasPrev = prev !== undefined && prev.position + prev.duration === note.position;
     const isPhraseEnd = !next || next.position > note.position + note.duration;
     const fall =
       preset.phraseEndFall && isPhraseEnd
         ? { ...preset.phraseEndFall, depth: preset.phraseEndFall.depth * s }
         : undefined;
 
-    const edit: NoteEdit = { pitch: composePitch(attack, durationMs, fall) };
+    const edit: NoteEdit = { pitch: composePitch(attack, durationMs, fall, hasPrev) };
     if (preset.vibrato && durationMs >= preset.vibrato.minNoteMs) {
       const { minNoteMs: _, ...params } = preset.vibrato;
       edit.vibrato = vibratoFor(scaleVibrato(params, s), note.vibrato);

@@ -141,3 +141,28 @@ describe("パラメータの範囲", () => {
     );
   });
 });
+
+describe("フレーズの頭（前に続くノートが無い）", () => {
+  const scoop = { kind: "scoop", params: { transitionMs: 80, depth: 1, lengthMs: 120 } } as const;
+
+  it("しゃくりはノートの頭で下から始め、目標の音高へ持ち上げる", () => {
+    expect(xy(attackPoints(scoop, 500, false))).toEqual([
+      [0, -10],
+      [120, 0],
+    ]);
+  });
+
+  it("始点を自分で置くため、snap_first を外す（OpenUtau に 0 へ書き換えさせない）", () => {
+    const pitch = composePitch(scoop, 500, undefined, false);
+    expect(pitch.snap_first).toBe(false);
+    expect(pitch.data[0].y).toBe(-10);
+  });
+
+  it("しゃくり以外の入りは、前に続くノートが無くても snap_first のまま", () => {
+    const overshoot = {
+      kind: "overshoot",
+      params: { transitionMs: 50, depth: 0.6, lengthMs: 90 },
+    } as const;
+    expect(composePitch(overshoot, 500, undefined, false).snap_first).toBe(true);
+  });
+});

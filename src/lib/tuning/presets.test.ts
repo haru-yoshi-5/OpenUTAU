@@ -37,7 +37,8 @@ describe("generatePresetEdits", () => {
   });
 
   it("強さに比例して、しゃくりの深さが変わる", () => {
-    const dip = (strength: number) => generate("wistful", strength).get(0)?.pitch?.data[1].y;
+    // 前の音から続く 2 番目のノート（index 1）で、下がった点の深さを見る
+    const dip = (strength: number) => generate("wistful", strength).get(1)?.pitch?.data[1].y;
     expect(dip(1)).toBe(-10);
     expect(dip(0.5)).toBe(-5);
   });
@@ -74,5 +75,32 @@ describe("編集差分としての書き出し", () => {
       // ビブラートを変えなかったノートは、元の値のまま
       expect(note?.vibrato).toEqual(edit.vibrato ?? original?.vibrato);
     }
+  });
+});
+
+describe("フレーズの途中の休符", () => {
+  // A メロの 6 番目（「ひ」、index 6）から後ろを 240 tick 遅らせ、「ぶ」（index 5）の後に休符を作る
+  const withRest = partA.notes.map((n) =>
+    n.index >= 6 ? { ...n, position: n.position + 240 } : n,
+  );
+  const edits = generatePresetEdits(
+    { notes: withRest, targets: allA, partPosition: partA.position, timeAxis },
+    "wistful",
+    1,
+  );
+
+  it("休符の前のノートにフォールを付け、続いているノートには付けない", () => {
+    expect(edits.get(5)?.pitch?.data.at(-1)?.y).toBe(-15);
+    expect(edits.get(4)?.pitch?.data.at(-1)?.y).toBe(0);
+  });
+
+  it("休符の後のノートは、下からしゃくり上げて入る", () => {
+    const pitch = edits.get(6)?.pitch;
+    expect(pitch?.snap_first).toBe(false);
+    expect(pitch?.data[0]).toMatchObject({ x: 0, y: -10 });
+  });
+
+  it("前に続くノートがあるノートは、前の音からつながる（snap_first のまま）", () => {
+    expect(edits.get(7)?.pitch?.snap_first).toBe(true);
   });
 });
