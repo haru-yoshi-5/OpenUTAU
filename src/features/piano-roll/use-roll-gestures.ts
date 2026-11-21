@@ -35,7 +35,7 @@ type Gesture =
       startY: number;
       moved: boolean;
     }
-  | { kind: "marquee"; id: number; mode: SelectMode }
+  | { kind: "marquee"; id: number; mode: SelectMode; anchorTick: number; anchorContentY: number }
   | { kind: "bars"; id: number; startBar: number; endBar: number };
 
 /**
@@ -169,8 +169,11 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
       select(part.index, [hit.index], additive ? "toggle" : "replace");
       return;
     }
-    start(e, { kind: "marquee", id, mode: additive ? "add" : "replace" });
-    setMarquee({ anchorTick: xToTick(x, cam), anchorContentY: y + cam.scrollY, x, y });
+    // 始点は操作の状態（gesture）に持ち、指を離したときの判定はそちらを使う。
+    // state（marquee）は描画のためだけに使い、描画の反映の順序に判定が左右されないようにする
+    const anchor = { anchorTick: xToTick(x, cam), anchorContentY: y + cam.scrollY };
+    start(e, { kind: "marquee", id, mode: additive ? "add" : "replace", ...anchor });
+    setMarquee({ ...anchor, x, y });
   };
 
   const onPointerMove = (e: PointerEvent) => {
@@ -209,14 +212,18 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
     if (!g || g.id !== e.pointerId) return;
     gesture.current = null;
     setPanning(false);
-    const m = marquee;
     setMarquee(null);
     if (cancelled) return;
     const { x, y } = localPoint(e);
     if (g.kind === "touch" && !g.moved) {
       selectAt(x, y, "replace");
-    } else if (g.kind === "marquee" && m) {
-      const rect = marqueeRect({ ...m, x, y });
+    } else if (g.kind === "marquee") {
+      const rect = marqueeRect({
+        anchorTick: g.anchorTick,
+        anchorContentY: g.anchorContentY,
+        x,
+        y,
+      });
       const isClick = Math.hypot(x - rect.x0, y - rect.y0) <= DRAG_THRESHOLD;
       // 何もない所をクリックしたら選択を解除する（追加のときはそのまま）
       if (isClick) {
