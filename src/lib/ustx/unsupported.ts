@@ -1,3 +1,4 @@
+import { isToneInMidiRange, MIDI_TONE_MAX, MIDI_TONE_MIN, toneName } from "../music";
 import type { Project } from "./load";
 
 /** ピッチ表示に反映しているカーブ */
@@ -23,6 +24,16 @@ export function detectUnsupported(project: Project): string[] {
   if (curveNames.size > 0) {
     notices.push(
       `表現カーブ（${[...curveNames].sort().join(", ")}）は表示に反映していません。ピッチには PITD のみ反映しています。`,
+    );
+  }
+
+  const outOfRange = project.voiceParts.reduce(
+    (sum, part) => sum + part.notes.filter((n) => !isToneInMidiRange(n.tone)).length,
+    0,
+  );
+  if (outOfRange > 0) {
+    notices.push(
+      `音高が表示範囲（${toneName(MIDI_TONE_MIN)}〜${toneName(MIDI_TONE_MAX)}）の外にあるノート ${outOfRange} 個は、ピアノロールに表示されません。`,
     );
   }
 

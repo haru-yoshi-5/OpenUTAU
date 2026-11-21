@@ -9,7 +9,7 @@ import type { VoicePart } from "../../lib/ustx/load";
 import type { PitchCurve } from "../../lib/ustx/pitch";
 import type { Tempo } from "../../lib/ustx/types";
 import { selectedNotesIn, useSelectionStore } from "../../stores/selection-store";
-import { useViewStore, ZOOM } from "../../stores/view-store";
+import { useViewStore, wheelZoomFactor, ZOOM } from "../../stores/view-store";
 import {
   type Camera,
   contentBoundsOf,
@@ -100,7 +100,7 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
       const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? LINE_PX : 1;
       if (e.ctrlKey || e.metaKey) {
         const anchorX = e.clientX - el.getBoundingClientRect().left - KEY_WIDTH;
-        zoomBy(e.deltaY < 0 ? ZOOM.step : 1 / ZOOM.step, Math.max(0, anchorX));
+        zoomBy(wheelZoomFactor(e.deltaY * unit), Math.max(0, anchorX));
       } else if (e.shiftKey) {
         scrollBy((e.deltaY || e.deltaX) * unit, 0);
       } else {

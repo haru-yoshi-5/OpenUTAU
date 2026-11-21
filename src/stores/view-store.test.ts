@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
-import { useViewStore, ZOOM } from "./view-store";
+import { useViewStore, wheelZoomFactor, ZOOM } from "./view-store";
 
 const store = useViewStore;
 const content = { startTick: -120, endTick: 7680, height: 1000 };
@@ -62,5 +62,24 @@ describe("useViewStore", () => {
     store.getState().resetContent({ startTick: 0, endTick: 100, height: 100 }, 0);
     store.getState().scrollBy(500, 500);
     expect(store.getState()).toMatchObject({ scrollTick: 0, scrollY: 0 });
+  });
+});
+
+describe("wheelZoomFactor", () => {
+  it("マウスの 1 目盛り（100px）で 1 段、逆向きで 1 段戻る", () => {
+    expect(wheelZoomFactor(-100)).toBeCloseTo(ZOOM.step);
+    expect(wheelZoomFactor(100)).toBeCloseTo(1 / ZOOM.step);
+  });
+
+  it("トラックパッドのピンチのような小さな動きは、動いた量に応じて少しだけ拡大する", () => {
+    const factor = wheelZoomFactor(-4);
+    expect(factor).toBeGreaterThan(1);
+    expect(factor).toBeLessThan(1.01);
+    // 細かいイベントを 25 回受けても、マウス 1 目盛りと同じだけしか変わらない
+    expect(factor ** 25).toBeCloseTo(ZOOM.step);
+  });
+
+  it("1 回のイベントでは 1 段を超えて変わらない", () => {
+    expect(wheelZoomFactor(-1000)).toBeCloseTo(ZOOM.step);
   });
 });

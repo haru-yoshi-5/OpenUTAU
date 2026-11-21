@@ -12,6 +12,7 @@ import {
 } from "../../lib/ustx/edits";
 import { UstxError } from "../../lib/ustx/errors";
 import type { LoadedUstx, Note } from "../../lib/ustx/load";
+import { partEndTick } from "../../lib/ustx/part";
 import { renderPartPitch } from "../../lib/ustx/pitch";
 import { TimeAxis } from "../../lib/ustx/time-axis";
 import { detectUnsupported } from "../../lib/ustx/unsupported";
@@ -137,11 +138,7 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
   const timeAxis = useMemo(() => new TimeAxis(original.tempos), [original.tempos]);
   const bars = useMemo(() => {
     const end = original.voiceParts.reduce(
-      (max, p) =>
-        Math.max(
-          max,
-          p.position + p.notes.reduce((e, n) => Math.max(e, n.position + n.duration), p.duration),
-        ),
+      (max, p) => Math.max(max, p.position + partEndTick(p)),
       0,
     );
     return computeBars(original.timeSignatures, end);

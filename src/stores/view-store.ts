@@ -50,6 +50,20 @@ interface ViewState {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+/** ホイール 1 目盛り（一般的なマウスで deltaY = 100px）あたりの拡大・縮小の段数 */
+const WHEEL_PX_PER_STEP = 100;
+
+/**
+ * Ctrl（⌘）＋ホイールでの拡大・縮小の倍率。
+ * トラックパッドのピンチは細かいイベントを大量に送るため、1 回ごとに固定の倍率を掛けると
+ * 一瞬で最大・最小まで振り切れる。動いた量（deltaY の px）に比例した段数だけ拡大・縮小する。
+ * マウスの 1 目盛りはこれまでどおり 1 段（ZOOM.step 倍）で、1 回のイベントでは最大 1 段までにする。
+ */
+export function wheelZoomFactor(deltaYPx: number): number {
+  const steps = clamp(-deltaYPx / WHEEL_PX_PER_STEP, -1, 1);
+  return ZOOM.step ** steps;
+}
+
 /** 右端・下端の余白（px） */
 const END_MARGIN_PX = 48;
 

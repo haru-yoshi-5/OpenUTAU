@@ -14,6 +14,7 @@ import {
   toneToY,
   visibleNotes,
   visibleToneRange,
+  focusYOf,
 } from "./geometry";
 
 const note = (position: number, duration: number, index = 0): Note => ({
@@ -106,5 +107,17 @@ describe("pitchPolylines", () => {
     const zoomedOut = pitchPolylines(long, { ...flat, pxPerTick: 0.05 }, 0, 5000);
     // 5 tick × 0.05 = 0.25px 間隔なので、4 サンプルに 1 つ
     expect(zoomedOut[0].length / 2).toBeLessThanOrEqual(1000 / 4 + 2);
+  });
+});
+
+describe("focusYOf", () => {
+  const at = (tone: number, index: number): Note => ({ ...note(0, 480, index), tone });
+
+  it("ノートの音高の平均を、縦方向の中心にする", () => {
+    expect(focusYOf([at(60, 0), at(64, 1)])).toBe((TONE_MAX - 62) * ROW_HEIGHT + ROW_HEIGHT / 2);
+  });
+
+  it("表示範囲外の音高のノートは中心の計算に含めない", () => {
+    expect(focusYOf([at(60, 0), at(200, 1)])).toBe(focusYOf([at(60, 0)]));
   });
 });
