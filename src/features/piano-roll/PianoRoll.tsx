@@ -38,8 +38,11 @@ interface PianoRollProps {
   bars: readonly Bar[];
   tempos: readonly Tempo[];
   pitch: PitchCurve | null;
-  /** プリセットの候補のピッチカーブ。今のカーブに点線で重ねる（無ければ null） */
-  candidatePitch?: PitchCurve | null;
+  /**
+   * プリセットの候補。ranges（パート先頭からの tick）の区間だけ、ピッチカーブを今のカーブに
+   * 点線で重ねる（無ければ null）
+   */
+  candidate?: { pitch: PitchCurve; ranges: readonly { from: number; to: number }[] } | null;
   /**
    * これが変わったときだけ、表示位置を先頭に戻す（パートの切り替え・ファイルの読み込み）。
    * 編集で part や pitch が変わっても、表示位置は保つ
@@ -52,7 +55,7 @@ export function PianoRoll({
   bars,
   tempos,
   pitch,
-  candidatePitch = null,
+  candidate = null,
   resetKey,
 }: PianoRollProps) {
   const containerRef = useRef<HTMLElement>(null);
@@ -192,8 +195,12 @@ export function PianoRoll({
   const notes = visibleNotes(part.notes, maxDuration, fromTick, toTick);
   const pitchLines = showPitch && pitch ? pitchPolylines(pitch, cam, fromTick, toTick) : [];
   // 候補は見比べるためのものなので、「ピッチカーブを表示」がオフでも描く
-  const candidateLines = candidatePitch
-    ? pitchPolylines(candidatePitch, cam, fromTick, toTick)
+  const candidateLines = candidate
+    ? candidate.ranges
+        .filter((r) => r.to > fromTick && r.from < toTick)
+        .flatMap((r) =>
+          pitchPolylines(candidate.pitch, cam, Math.max(r.from, fromTick), Math.min(r.to, toTick)),
+        )
     : [];
   const tempoMarks = tempos
     .map((t) => ({ ...t, rel: t.position - part.position }))
@@ -253,7 +260,7 @@ export function PianoRoll({
             />
             ピッチ（OpenUtau の計算を近似）
           </li>
-          {candidatePitch && (
+          {candidate && (
             <li className="flex items-center gap-1">
               <span
                 aria-hidden="true"

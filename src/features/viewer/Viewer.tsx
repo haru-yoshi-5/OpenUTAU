@@ -22,7 +22,7 @@ import { useEditStore } from "../../stores/edit-store";
 import { usePresetStore } from "../../stores/preset-store";
 import { type RoundTripStatus, useProjectStore } from "../../stores/project-store";
 import { selectedNotesIn, useSelectionStore } from "../../stores/selection-store";
-import { buildPresetChanges, withCandidate } from "../presets/candidate";
+import { buildPresetChanges, candidateTickRanges, withCandidate } from "../presets/candidate";
 import { PresetPanel } from "../presets/PresetPanel";
 import { DiscardDialog } from "./DiscardDialog";
 import { EditToolbar } from "./EditToolbar";
@@ -160,15 +160,36 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
   const candidateChanges = useMemo(
     () =>
       preset.previewing && part
-        ? buildPresetChanges(part, edits, selected, timeAxis, preset.id, preset.strength / 100)
+        ? buildPresetChanges(
+            part,
+            original.voiceParts[partIndex],
+            edits,
+            selected,
+            timeAxis,
+            preset.id,
+            preset.strength / 100,
+          )
         : [],
-    [preset.previewing, preset.id, preset.strength, part, edits, selected, timeAxis],
+    [
+      preset.previewing,
+      preset.id,
+      preset.strength,
+      part,
+      original,
+      partIndex,
+      edits,
+      selected,
+      timeAxis,
+    ],
   );
-  const candidatePitch = useMemo(() => {
-    if (candidateChanges.length === 0) return null;
+  const candidate = useMemo(() => {
+    if (candidateChanges.length === 0 || !part) return null;
     const candidateProject = applyEditsToProject(original, withCandidate(edits, candidateChanges));
-    return renderPartPitch(candidateProject.voiceParts[partIndex], timeAxis);
-  }, [candidateChanges, original, edits, partIndex, timeAxis]);
+    const pitch = renderPartPitch(candidateProject.voiceParts[partIndex], timeAxis);
+    if (!pitch) return null;
+    // 変わるノートの区間だけに点線を描き、変わらない区間で今のカーブと重ならないようにする
+    return { pitch, ranges: candidateTickRanges(part, candidateChanges) };
+  }, [candidateChanges, original, edits, part, partIndex, timeAxis]);
 
   const acceptCandidate = () => {
     setEditError(null);
@@ -302,7 +323,7 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
                     bars={bars}
                     tempos={project.tempos}
                     pitch={pitch}
-                    candidatePitch={candidatePitch}
+                    candidate={candidate}
                     // 編集では表示位置を保ち、パートやファイルが変わったときだけ先頭へ戻す
                     resetKey={original.voiceParts[partIndex]}
                   />
