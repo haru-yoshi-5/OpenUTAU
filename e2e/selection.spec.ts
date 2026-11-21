@@ -72,6 +72,26 @@ test("小節ルーラーのドラッグで、小節単位の範囲を選ぶ", as
   await expect.poll(() => selectedCount(page)).toBe(7);
 });
 
+test("ドラッグの途中でスクロールしても、最初に押した場所から囲める", async ({ page }) => {
+  await openSample(page);
+  const a = await noteCenter(page, 3);
+  const b = await noteCenter(page, 5);
+  // 3〜5 番目のノートの上の何もない所から始める
+  const top = Math.min(a.y, b.y) - 30;
+  await page.mouse.move(a.x - 2, top);
+  await page.mouse.down();
+  await page.mouse.move(a.x + 10, top + 10, { steps: 2 });
+  // ドラッグしたまま下へスクロールする（ノートは画面上で上へ動く）
+  await page.mouse.wheel(0, 140);
+  await expect.poll(async () => (await noteCenter(page, 3)).y).toBeLessThan(a.y - 100);
+  const movedB = await noteCenter(page, 5);
+  const movedA = await noteCenter(page, 3);
+  // スクロール後のノートの下まで囲む。始点は最初に押した内容の位置に残っているので、3 つとも入る
+  await page.mouse.move(movedB.x + 2, Math.max(movedA.y, movedB.y) + 10, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(() => selectedCount(page)).toBe(3);
+});
+
 test("Ctrl+A ですべて選び、Esc で解除する", async ({ page }) => {
   await openSample(page);
   await roll(page).focus();

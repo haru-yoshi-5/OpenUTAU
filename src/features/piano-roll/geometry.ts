@@ -23,6 +23,15 @@ export interface Camera {
   scrollY: number;
 }
 
+/**
+ * ピアノロールの要素の、描画（Konva の Stage）の左上の画面座標。
+ * 要素には 1px の枠線があり、描画はその内側から始まるため、枠線の幅（clientLeft / clientTop）を足す
+ */
+export function drawingOrigin(el: Element): { left: number; top: number } {
+  const box = el.getBoundingClientRect();
+  return { left: box.left + el.clientLeft, top: box.top + el.clientTop };
+}
+
 export const tickToX = (tick: number, cam: Camera) => (tick - cam.scrollTick) * cam.pxPerTick;
 /** 音高の行の上端 */
 export const toneToY = (tone: number, cam: Camera) => (TONE_MAX - tone) * ROW_HEIGHT - cam.scrollY;

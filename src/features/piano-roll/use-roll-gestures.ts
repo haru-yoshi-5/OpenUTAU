@@ -2,7 +2,7 @@ import { type PointerEvent, type RefObject, useEffect, useRef, useState } from "
 import type { Bar } from "../../lib/ustx/bars";
 import type { VoicePart } from "../../lib/ustx/load";
 import { type SelectMode, useSelectionStore } from "../../stores/selection-store";
-import { type Camera, KEY_WIDTH, RULER_HEIGHT } from "./geometry";
+import { type Camera, drawingOrigin, KEY_WIDTH, RULER_HEIGHT, tickToX } from "./geometry";
 import {
   barIndexAt,
   barSpanTicks,
@@ -35,8 +35,20 @@ type Gesture =
       startY: number;
       moved: boolean;
     }
-  | { kind: "marquee"; id: number; x0: number; y0: number; mode: SelectMode }
-  | { kind: "bars"; id: number; startBar: number };
+  | { kind: "marquee"; id: number; mode: SelectMode }
+  | { kind: "bars"; id: number; startBar: number; endBar: number };
+
+/**
+ * 矩形選択の状態。始点は内容の座標（tick と、スクロール 0 のときの y）で持ち、
+ * ドラッグ中にホイールでスクロールしても、最初に押した場所から囲めるようにする。
+ * 終点は今のポインタの位置（描画領域内の px）
+ */
+interface Marquee {
+  anchorTick: number;
+  anchorContentY: number;
+  x: number;
+  y: number;
+}
 
 interface Options {
   containerRef: RefObject<HTMLElement | null>;
@@ -56,7 +68,7 @@ const isTextInput = (target: EventTarget | null) =>
 
 export function useRollGestures({ containerRef, part, bars, maxDuration, cam, scrollBy }: Options) {
   const gesture = useRef<Gesture | null>(null);
-  const [marquee, setMarquee] = useState<Rect | null>(null);
+  const [marquee, setMarquee] = useState<Marquee | null>(null);
   const [panning, setPanning] = useState(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const { select, selectBars } = useSelectionStore.getState();
@@ -80,15 +92,22 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
 
   /** 描画領域（鍵盤・ルーラーを除く）の左上を原点とした座標 */
   const localPoint = (e: PointerEvent) => {
-    const box = containerRef.current?.getBoundingClientRect();
+    const origin = containerRef.current ? drawingOrigin(containerRef.current) : { left: 0, top: 0 };
     return {
-      x: e.clientX - (box?.left ?? 0) - KEY_WIDTH,
-      y: e.clientY - (box?.top ?? 0) - RULER_HEIGHT,
+      x: e.clientX - origin.left - KEY_WIDTH,
+      y: e.clientY - origin.top - RULER_HEIGHT,
     };
   };
 
-  const selectBarsTo = (startBar: number, x: number) => {
-    const endBar = barIndexAt(bars, part.position, xToTick(x, cam));
+  /** 矩形選択の、今のカメラでの矩形（描画領域内の px） */
+  const marqueeRect = (m: Marquee): Rect => ({
+    x0: tickToX(m.anchorTick, cam),
+    y0: m.anchorContentY - cam.scrollY,
+    x1: m.x,
+    y1: m.y,
+  });
+
+  const selectBarsTo = (startBar: number, endBar: number) => {
     const range = barSpanTicks(bars, part.position, startBar, endBar);
     selectBars(
       part.index,
@@ -117,8 +136,8 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
     // 小節ルーラー：小節単位の範囲選択
     if (y < 0 && x >= 0 && (isTouch || e.button === 0)) {
       const startBar = barIndexAt(bars, part.position, xToTick(x, cam));
-      start(e, { kind: "bars", id, startBar });
-      selectBarsTo(startBar, x);
+      start(e, { kind: "bars", id, startBar, endBar: startBar });
+      selectBarsTo(startBar, startBar);
       return;
     }
     // 鍵盤の上では何もしない
@@ -150,8 +169,8 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
       select(part.index, [hit.index], additive ? "toggle" : "replace");
       return;
     }
-    start(e, { kind: "marquee", id, x0: x, y0: y, mode: additive ? "add" : "replace" });
-    setMarquee({ x0: x, y0: y, x1: x, y1: y });
+    start(e, { kind: "marquee", id, mode: additive ? "add" : "replace" });
+    setMarquee({ anchorTick: xToTick(x, cam), anchorContentY: y + cam.scrollY, x, y });
   };
 
   const onPointerMove = (e: PointerEvent) => {
@@ -171,12 +190,17 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
       }
       case "marquee": {
         const { x, y } = localPoint(e);
-        setMarquee({ x0: g.x0, y0: g.y0, x1: x, y1: y });
+        setMarquee((m) => m && { ...m, x, y });
         break;
       }
-      case "bars":
-        selectBarsTo(g.startBar, localPoint(e).x);
+      case "bars": {
+        // 同じ小節の上で動いている間は、選択を作り直さない
+        const endBar = barIndexAt(bars, part.position, xToTick(localPoint(e).x, cam));
+        if (endBar === g.endBar) break;
+        gesture.current = { ...g, endBar };
+        selectBarsTo(g.startBar, endBar);
         break;
+      }
     }
   };
 
@@ -185,14 +209,15 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
     if (!g || g.id !== e.pointerId) return;
     gesture.current = null;
     setPanning(false);
+    const m = marquee;
     setMarquee(null);
     if (cancelled) return;
     const { x, y } = localPoint(e);
     if (g.kind === "touch" && !g.moved) {
       selectAt(x, y, "replace");
-    } else if (g.kind === "marquee") {
-      const rect = { x0: g.x0, y0: g.y0, x1: x, y1: y };
-      const isClick = Math.hypot(x - g.x0, y - g.y0) <= DRAG_THRESHOLD;
+    } else if (g.kind === "marquee" && m) {
+      const rect = marqueeRect({ ...m, x, y });
+      const isClick = Math.hypot(x - rect.x0, y - rect.y0) <= DRAG_THRESHOLD;
       // 何もない所をクリックしたら選択を解除する（追加のときはそのまま）
       if (isClick) {
         if (g.mode === "replace") select(part.index, [], "replace");
@@ -203,7 +228,7 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
   };
 
   return {
-    marquee,
+    marquee: marquee && marqueeRect(marquee),
     /** 表示の移動中か、Space を押していて移動できる状態か（カーソルの形に使う） */
     panMode: panning || spaceHeld,
     handlers: {

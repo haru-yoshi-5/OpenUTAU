@@ -13,6 +13,7 @@ import { useViewStore, wheelZoomFactor, ZOOM } from "../../stores/view-store";
 import {
   type Camera,
   contentBoundsOf,
+  drawingOrigin,
   focusYOf,
   gridLines,
   KEY_WIDTH,
@@ -97,9 +98,15 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? LINE_PX : 1;
+      // 行単位・ページ単位の deltaY を px に換算する（ページ単位は描画領域 1 画面分）
+      const unit =
+        e.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? LINE_PX
+          : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? el.clientHeight
+            : 1;
       if (e.ctrlKey || e.metaKey) {
-        const anchorX = e.clientX - el.getBoundingClientRect().left - KEY_WIDTH;
+        const anchorX = e.clientX - drawingOrigin(el).left - KEY_WIDTH;
         zoomBy(wheelZoomFactor(e.deltaY * unit), Math.max(0, anchorX));
       } else if (e.shiftKey) {
         scrollBy((e.deltaY || e.deltaX) * unit, 0);

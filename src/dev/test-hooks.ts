@@ -1,4 +1,5 @@
 import {
+  drawingOrigin,
   KEY_WIDTH,
   ROW_HEIGHT,
   RULER_HEIGHT,
@@ -38,7 +39,7 @@ function rollContext() {
   if (!el || load.status !== "loaded") throw new Error("ピアノロールが表示されていません");
   const { pxPerTick, scrollTick, scrollY } = useViewStore.getState();
   return {
-    box: el.getBoundingClientRect(),
+    box: drawingOrigin(el),
     part: load.loaded.project.voiceParts[partIndex],
     cam: { pxPerTick, scrollTick, scrollY },
   };

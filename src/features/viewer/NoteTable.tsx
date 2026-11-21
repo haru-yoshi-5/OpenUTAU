@@ -73,7 +73,6 @@ export function NoteTable({ part, editedNotes, onToggleVibrato }: NoteTableProps
                 return (
                   <tr
                     key={note.index}
-                    aria-selected={isSelected}
                     className={`border-t ${isSelected ? "bg-warning/15" : edited ? "bg-primary/5" : ""}`}
                   >
                     <td className="px-3 py-1">
