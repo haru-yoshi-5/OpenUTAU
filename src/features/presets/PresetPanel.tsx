@@ -17,13 +17,20 @@ interface PresetPanelProps {
   changeCount: number;
   /** 候補を採用する（編集として確定する） */
   onAccept: () => void;
+  /** 強さの変更を候補へ反映している途中か（その間は、古い強さの候補を採用させない） */
+  updating?: boolean;
 }
 
 /**
  * 調声プリセットを選び、強さを決め、候補を見比べてから採用・却下するパネル。
  * 候補を表示している間は、選択・プリセット・強さを変えると候補も作り直す。
  */
-export function PresetPanel({ selectedCount, changeCount, onAccept }: PresetPanelProps) {
+export function PresetPanel({
+  selectedCount,
+  changeCount,
+  onAccept,
+  updating = false,
+}: PresetPanelProps) {
   const titleId = useId();
   const groupName = useId();
   const strengthId = useId();
@@ -53,17 +60,23 @@ export function PresetPanel({ selectedCount, changeCount, onAccept }: PresetPane
     target?.focus();
   }, [previewing]);
   const toggleBy = (action: () => void) => () => {
+    const before = usePresetStore.getState().previewing;
     focusAfterToggle.current = true;
     action();
+    // 採用に失敗したときなど、表示が切り替わらなかったら印を戻す（あとで別の理由で候補が消えたときに
+    // フォーカスを奪わないように）
+    if (usePresetStore.getState().previewing === before) focusAfterToggle.current = false;
   };
 
   const status = !hasSelection
     ? "ピアノロールかノート一覧でノートを選ぶと、プリセットを試せます。"
     : !previewing
       ? `選んだ ${selectedCount} 個のノートに「${preset.label}」を試せます。`
-      : changeCount > 0
-        ? `候補：${changeCount} 個のノートが変わります（ピアノロールの点線）。`
-        : "この設定では、選んだノートは変わりません。";
+      : updating
+        ? "候補を作り直しています…"
+        : changeCount > 0
+          ? `候補：${changeCount} 個のノートが変わります（ピアノロールの点線）。`
+          : "この設定では、選んだノートは変わりません。";
 
   const option = (id: PresetId, label: string) => (
     <label
@@ -135,7 +148,7 @@ export function PresetPanel({ selectedCount, changeCount, onAccept }: PresetPane
                 ref={acceptRef}
                 size="sm"
                 onClick={toggleBy(onAccept)}
-                disabled={changeCount === 0}
+                disabled={updating || changeCount === 0}
                 aria-describedby={statusId}
               >
                 <Check aria-hidden />

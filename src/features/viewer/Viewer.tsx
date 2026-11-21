@@ -184,7 +184,10 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
     return { pitch, ranges: candidateTickRanges(part, candidateChanges) };
   }, [candidateChanges, original, edits, part, partIndex, timeAxis]);
 
+  const candidateUpdating = preset.previewing && strength !== preset.strength;
   const acceptCandidate = () => {
+    // 画面の強さと候補の強さが食い違っている間は、古い候補を確定しない
+    if (candidateUpdating) return;
     setEditError(null);
     try {
       const { label } = PRESETS[preset.id];
@@ -301,6 +304,7 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
                 selectedCount={selected.size}
                 changeCount={candidateChanges.length}
                 onAccept={acceptCandidate}
+                updating={candidateUpdating}
               />
             )}
             {editError && (
