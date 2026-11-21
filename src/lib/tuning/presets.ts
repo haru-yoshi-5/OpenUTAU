@@ -22,13 +22,19 @@ import {
  */
 
 export type ExpressionId = "natural" | "strong" | "wistful";
+/** テクニックを 1 つだけ当てる「個別プリセット」 */
+export type TechniqueId = "smooth" | "scoop" | "overshoot" | "fall" | "vibrato";
+export type PresetId = ExpressionId | TechniqueId;
 
 interface ExpressionPreset {
   label: string;
   description: string;
-  attack: Attack;
+  /** ノートの入り。無ければピッチ点は変えない（ビブラートだけのプリセット） */
+  attack?: Attack;
   /** フレーズの終わり（次のノートとの間に隙間がある、または最後のノート）に付けるフォール */
   phraseEndFall?: FallParams;
+  /** 選んだすべてのノートの終わりに付けるフォール（個別プリセット用） */
+  everyNoteFall?: FallParams;
   /**
    * これ以上長いノート（ms）にだけビブラートを付ける。短いノートのビブラートは変えない。
    * 120 BPM の 4 分音符（500ms）には付けず、2 分音符（1000ms）前後から付く値にする
@@ -78,6 +84,54 @@ export const EXPRESSION_PRESETS: Readonly<Record<ExpressionId, ExpressionPreset>
       fadeOutPct: 15,
     },
   },
+};
+
+/** 個別プリセットのビブラート（「自然」と同じ控えめな値）。長い音にだけ付ける */
+const SINGLE_VIBRATO = {
+  minNoteMs: 650,
+  lengthPct: 55,
+  periodMs: 185,
+  depthCents: 25,
+  fadeInPct: 30,
+  fadeOutPct: 15,
+};
+
+/**
+ * 個別プリセット。テクニックを 1 つだけ当てる。ピッチ点を作るものは、ほかの部分を OpenUtau の
+ * 既定の音程遷移（80ms）にそろえる（ピッチ点はノートごとに置き換わるため）。
+ */
+export const TECHNIQUE_PRESETS: Readonly<Record<TechniqueId, ExpressionPreset>> = {
+  smooth: {
+    label: "なめらかな遷移",
+    description: "前の音から時間をかけて移り、音と音をなめらかにつなぎます。",
+    attack: { kind: "transition", params: { lengthMs: 160 } },
+  },
+  scoop: {
+    label: "しゃくり",
+    description: "下からしゃくり上げて音に入ります。",
+    attack: { kind: "scoop", params: { transitionMs: 80, depth: 1, lengthMs: 120 } },
+  },
+  overshoot: {
+    label: "オーバーシュート",
+    description: "目標の音を少し越えてから落ち着かせ、音の頭を強調します。",
+    attack: { kind: "overshoot", params: { transitionMs: 60, depth: 0.6, lengthMs: 90 } },
+  },
+  fall: {
+    label: "フォール",
+    description: "選んだ各ノートの終わりで音を落とします。",
+    attack: { kind: "transition", params: { lengthMs: DEFAULT_TRANSITION_MS } },
+    everyNoteFall: { depth: 1.5, lengthMs: 180 },
+  },
+  vibrato: {
+    label: "ビブラート",
+    description: "長い音にビブラートを付けます。ピッチ点は変えません。",
+    vibrato: SINGLE_VIBRATO,
+  },
+};
+
+export const PRESETS: Readonly<Record<PresetId, ExpressionPreset>> = {
+  ...EXPRESSION_PRESETS,
+  ...TECHNIQUE_PRESETS,
 };
 
 const lerp = (from: number, to: number, t: number) => from + (to - from) * t;
@@ -135,15 +189,15 @@ export interface PresetInput {
  */
 export function generatePresetEdits(
   input: PresetInput,
-  id: ExpressionId,
+  id: PresetId,
   strength: number,
 ): Map<number, NoteEdit> {
   const edits = new Map<number, NoteEdit>();
   const s = Math.min(1, Math.max(0, strength));
   if (s === 0 || !Number.isFinite(strength)) return edits;
 
-  const preset = EXPRESSION_PRESETS[id];
-  const attack = scaleAttack(preset.attack, s);
+  const preset = PRESETS[id];
+  const attack = preset.attack && scaleAttack(preset.attack, s);
   const { notes, targets, partPosition, timeAxis } = input;
 
   notes.forEach((note, i) => {
@@ -155,17 +209,16 @@ export function generatePresetEdits(
     // OpenUtau と同じく、前のノートの終わりがちょうどこのノートの頭のときだけ「つながっている」とみなす
     const hasPrev = prev !== undefined && prev.position + prev.duration === note.position;
     const isPhraseEnd = !next || next.position > note.position + note.duration;
-    const fall =
-      preset.phraseEndFall && isPhraseEnd
-        ? { ...preset.phraseEndFall, depth: preset.phraseEndFall.depth * s }
-        : undefined;
+    const fallParams = preset.everyNoteFall ?? (isPhraseEnd ? preset.phraseEndFall : undefined);
+    const fall = fallParams && { ...fallParams, depth: fallParams.depth * s };
 
-    const edit: NoteEdit = { pitch: composePitch(attack, durationMs, fall, hasPrev) };
+    const edit: NoteEdit = {};
+    if (attack) edit.pitch = composePitch(attack, durationMs, fall, hasPrev);
     if (preset.vibrato && durationMs >= preset.vibrato.minNoteMs) {
       const { minNoteMs: _, ...params } = preset.vibrato;
       edit.vibrato = vibratoFor(scaleVibrato(params, s), note.vibrato);
     }
-    edits.set(note.index, edit);
+    if (edit.pitch || edit.vibrato) edits.set(note.index, edit);
   });
   return edits;
 }

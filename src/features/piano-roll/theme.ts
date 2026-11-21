@@ -28,6 +28,8 @@ export interface RollTheme {
   selectionStroke: string;
   /** ルーラー上の小節範囲 */
   selectionRuler: string;
+  /** プリセットの候補のピッチカーブ（点線） */
+  candidateLine: string;
 }
 
 const light: RollTheme = {
@@ -53,6 +55,7 @@ const light: RollTheme = {
   selectionBand: "rgba(245, 158, 11, 0.12)",
   selectionStroke: "#b45309",
   selectionRuler: "rgba(245, 158, 11, 0.35)",
+  candidateLine: "#7c3aed",
 };
 
 const dark: RollTheme = {
@@ -78,6 +81,7 @@ const dark: RollTheme = {
   selectionBand: "rgba(251, 191, 36, 0.14)",
   selectionStroke: "#fde68a",
   selectionRuler: "rgba(251, 191, 36, 0.35)",
+  candidateLine: "#c4b5fd",
 };
 
 const QUERY = "(prefers-color-scheme: dark)";
