@@ -31,3 +31,18 @@ describe("detectUnsupported", () => {
     expect(detectUnsupported(project)).toEqual([]);
   });
 });
+
+describe("detectUnsupported：表示範囲外の音高", () => {
+  it("0〜127 の外にある音高のノートの数を知らせる", () => {
+    const project = load(demoText);
+    project.voiceParts[0].notes[0].tone = 130;
+    project.voiceParts[1].notes[0].tone = -1;
+    expect(detectUnsupported(project)).toContain(
+      "音高が表示範囲（C-1〜G9）の外にあるノート 2 個は、ピアノロールに表示されません。",
+    );
+  });
+
+  it("範囲内なら知らせない", () => {
+    expect(detectUnsupported(load(demoText)).some((n) => n.includes("表示範囲"))).toBe(false);
+  });
+});

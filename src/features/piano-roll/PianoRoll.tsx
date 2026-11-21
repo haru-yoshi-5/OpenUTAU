@@ -8,10 +8,12 @@ import type { Bar } from "../../lib/ustx/bars";
 import type { VoicePart } from "../../lib/ustx/load";
 import type { PitchCurve } from "../../lib/ustx/pitch";
 import type { Tempo } from "../../lib/ustx/types";
-import { useViewStore, ZOOM } from "../../stores/view-store";
+import { selectedNotesIn, useSelectionStore } from "../../stores/selection-store";
+import { useViewStore, wheelZoomFactor, ZOOM } from "../../stores/view-store";
 import {
   type Camera,
   contentBoundsOf,
+  drawingOrigin,
   focusYOf,
   gridLines,
   KEY_WIDTH,
@@ -24,6 +26,7 @@ import {
   visibleToneRange,
 } from "./geometry";
 import { useRollTheme } from "./theme";
+import { useRollGestures } from "./use-roll-gestures";
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif';
 /** ホイールの deltaMode が行単位のときの 1 行あたりの px */
@@ -95,10 +98,16 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? LINE_PX : 1;
+      // 行単位・ページ単位の deltaY を px に換算する（ページ単位は描画領域 1 画面分）
+      const unit =
+        e.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? LINE_PX
+          : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? el.clientHeight
+            : 1;
       if (e.ctrlKey || e.metaKey) {
-        const anchorX = e.clientX - el.getBoundingClientRect().left - KEY_WIDTH;
-        zoomBy(e.deltaY < 0 ? ZOOM.step : 1 / ZOOM.step, Math.max(0, anchorX));
+        const anchorX = e.clientX - drawingOrigin(el).left - KEY_WIDTH;
+        zoomBy(wheelZoomFactor(e.deltaY * unit), Math.max(0, anchorX));
       } else if (e.shiftKey) {
         scrollBy((e.deltaY || e.deltaX) * unit, 0);
       } else {
@@ -109,10 +118,26 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomBy, scrollBy]);
 
-  // ドラッグで表示位置を動かす（タッチ操作にも対応）
-  const drag = useRef<{ id: number; x: number; y: number } | null>(null);
-
   const onKeyDown = (e: KeyboardEvent) => {
+    // 全選択（Ctrl / ⌘ + A）と選択の解除（Esc）
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      useSelectionStore.getState().select(
+        part.index,
+        part.notes.map((n) => n.index),
+        "replace",
+      );
+      return;
+    }
+    if (e.key === "Escape") {
+      useSelectionStore.getState().clear();
+      return;
+    }
+    // Space は表示の移動に使うため、ページのスクロールを止める
+    if (e.key === " ") {
+      e.preventDefault();
+      return;
+    }
     const actions: Record<string, () => void> = {
       ArrowLeft: () => scrollBy(-80, 0),
       ArrowRight: () => scrollBy(80, 0),
@@ -139,6 +164,16 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
     () => part.notes.reduce((max, n) => Math.max(max, n.duration), 0),
     [part.notes],
   );
+  const selected = useSelectionStore((s) => selectedNotesIn(s, part.index));
+  const barRange = useSelectionStore((s) => (s.partIndex === part.index ? s.barRange : null));
+  const { marquee, panMode, handlers } = useRollGestures({
+    containerRef,
+    part,
+    bars,
+    maxDuration,
+    cam,
+    scrollBy,
+  });
   const toneRange = visibleToneRange(cam, height);
   const tones = Array.from(
     { length: Math.max(0, toneRange.high - toneRange.low + 1) },
@@ -214,25 +249,17 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
         ref={containerRef}
         role="application"
         aria-roledescription="ピアノロール"
-        aria-label={`パート「${part.name}」、ノート ${part.notes.length} 個`}
+        aria-label={`パート「${part.name}」、ノート ${part.notes.length} 個、選択 ${selected.size} 個`}
         aria-describedby={helpId}
         // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- キーボードで操作できるようフォーカスを受け取る
         tabIndex={0}
         onKeyDown={onKeyDown}
-        onPointerDown={(e) => {
-          if (e.button !== 0) return;
-          e.currentTarget.setPointerCapture(e.pointerId);
-          drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
-        }}
-        onPointerMove={(e) => {
-          const d = drag.current;
-          if (!d || d.id !== e.pointerId) return;
-          scrollBy(d.x - e.clientX, d.y - e.clientY);
-          drag.current = { id: d.id, x: e.clientX, y: e.clientY };
-        }}
-        onPointerUp={() => (drag.current = null)}
-        onPointerCancel={() => (drag.current = null)}
-        className="relative h-[60vh] min-h-72 cursor-grab touch-none overflow-hidden rounded-lg border select-none active:cursor-grabbing"
+        {...handlers}
+        // 中ボタンのドラッグで表示を移動するとき、ブラウザの自動スクロールを出さない
+        onAuxClick={(e) => e.preventDefault()}
+        className={`relative h-[60vh] min-h-72 touch-none overflow-hidden rounded-lg border select-none ${
+          panMode ? "cursor-grab active:cursor-grabbing" : "cursor-default"
+        }`}
         style={{ background: theme.background }}
       >
         <div aria-hidden="true">
@@ -282,7 +309,18 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
                     />
                   );
                 })}
+                {barRange && (
+                  <Rect
+                    x={tickToX(barRange.fromTick, cam)}
+                    y={0}
+                    width={(barRange.toTick - barRange.fromTick) * pxPerTick}
+                    height={height}
+                    fill={theme.selectionBand}
+                    perfectDrawEnabled={false}
+                  />
+                )}
                 {notes.map((note) => {
+                  const isSelected = selected.has(note.index);
                   const x = tickToX(note.position, cam);
                   const w = Math.max(2, note.duration * pxPerTick - 1);
                   const y = toneToY(note.tone, cam);
@@ -294,9 +332,9 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
                         width={w}
                         height={ROW_HEIGHT - 2}
                         cornerRadius={2}
-                        fill={theme.note}
-                        stroke={theme.noteBorder}
-                        strokeWidth={1}
+                        fill={isSelected ? theme.noteSelected : theme.note}
+                        stroke={isSelected ? theme.noteSelectedBorder : theme.noteBorder}
+                        strokeWidth={isSelected ? 2 : 1}
                         perfectDrawEnabled={false}
                       />
                       {w > 14 && (
@@ -308,7 +346,7 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
                           text={note.lyric}
                           fontSize={10}
                           fontFamily={FONT}
-                          fill={theme.noteText}
+                          fill={isSelected ? theme.noteSelectedText : theme.noteText}
                           verticalAlign="middle"
                           wrap="none"
                           ellipsis
@@ -330,6 +368,18 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
                     perfectDrawEnabled={false}
                   />
                 ))}
+                {marquee && (
+                  <Rect
+                    x={Math.min(marquee.x0, marquee.x1)}
+                    y={Math.min(marquee.y0, marquee.y1)}
+                    width={Math.abs(marquee.x1 - marquee.x0)}
+                    height={Math.abs(marquee.y1 - marquee.y0)}
+                    fill={theme.selectionBand}
+                    stroke={theme.selectionStroke}
+                    strokeWidth={1}
+                    dash={[4, 3]}
+                  />
+                )}
               </Group>
 
               {/* 小節ルーラー */}
@@ -342,6 +392,15 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
                 clipHeight={RULER_HEIGHT}
               >
                 <Rect width={width} height={RULER_HEIGHT} fill={theme.rulerBackground} />
+                {barRange && (
+                  <Rect
+                    x={tickToX(barRange.fromTick, cam)}
+                    y={0}
+                    width={(barRange.toTick - barRange.fromTick) * pxPerTick}
+                    height={RULER_HEIGHT}
+                    fill={theme.selectionRuler}
+                  />
+                )}
                 {lines
                   .filter((line) => line.kind === "bar")
                   .map((line) => {
@@ -436,10 +495,17 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
           </Stage>
         </div>
       </section>
-      <p id={helpId} className="text-xs text-muted-foreground">
-        ドラッグまたはホイールで移動、Ctrl（⌘）＋ホイールで拡大・縮小できます。フォーカス中は矢印キーで移動、＋／－キーで拡大・縮小、Home／End
-        キーで先頭・末尾へ移動します。
-      </p>
+      <div id={helpId} className="space-y-0.5 text-xs text-muted-foreground">
+        <p>
+          選択：ノートをクリック（Shift／Ctrl（⌘）で追加・解除）、何もない所をドラッグで囲む、小節ルーラーをドラッグで小節単位。Ctrl（⌘）＋A
+          ですべて選択、Esc で解除します。
+        </p>
+        <p>
+          移動：ホイール、中ボタンか Space ＋ドラッグ、タッチでは 1
+          本指のドラッグ（タップでノートを選択）。Ctrl（⌘）＋ホイールで拡大・縮小、フォーカス中は矢印キーで移動、＋／－キーで拡大・縮小、Home／End
+          キーで先頭・末尾へ移動します。
+        </p>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,7 @@
+import { isToneInMidiRange, MIDI_TONE_MAX, MIDI_TONE_MIN } from "../../lib/music";
 import type { Bar } from "../../lib/ustx/bars";
 import type { Note, VoicePart } from "../../lib/ustx/load";
+import { partEndTick } from "../../lib/ustx/part";
 import type { PitchCurve } from "../../lib/ustx/pitch";
 import type { ContentBounds } from "../../stores/view-store";
 
@@ -10,8 +12,8 @@ export const RULER_HEIGHT = 28;
 /** 1 半音あたりの高さ（px） */
 export const ROW_HEIGHT = 14;
 /** 表示する音高の範囲（MIDI ノート番号）。編集時に任意の音高へ動かせるよう全域を持つ */
-export const TONE_MIN = 0;
-export const TONE_MAX = 127;
+export const TONE_MIN = MIDI_TONE_MIN;
+export const TONE_MAX = MIDI_TONE_MAX;
 export const CONTENT_HEIGHT = (TONE_MAX - TONE_MIN + 1) * ROW_HEIGHT;
 
 /** 表示中の座標系。x は描画領域の左端、y は描画領域の上端を 0 とする */
@@ -19,6 +21,15 @@ export interface Camera {
   pxPerTick: number;
   scrollTick: number;
   scrollY: number;
+}
+
+/**
+ * ピアノロールの要素の、描画（Konva の Stage）の左上の画面座標。
+ * 要素には 1px の枠線があり、描画はその内側から始まるため、枠線の幅（clientLeft / clientTop）を足す
+ */
+export function drawingOrigin(el: Element): { left: number; top: number } {
+  const box = el.getBoundingClientRect();
+  return { left: box.left + el.clientLeft, top: box.top + el.clientTop };
 }
 
 export const tickToX = (tick: number, cam: Camera) => (tick - cam.scrollTick) * cam.pxPerTick;
@@ -30,18 +41,16 @@ export const centsToY = (cents: number, cam: Camera) =>
 
 /** ノートが集まっている音域の中心（行の中央の y 座標、スクロール 0 のとき） */
 export function focusYOf(notes: readonly Note[]): number {
-  const avg = notes.length ? notes.reduce((sum, n) => sum + n.tone, 0) / notes.length : 66;
+  // 表示範囲外の音高のノートは描けないため、中心の計算からも外す
+  const inRange = notes.filter((n) => isToneInMidiRange(n.tone));
+  const avg = inRange.length ? inRange.reduce((sum, n) => sum + n.tone, 0) / inRange.length : 66;
   return (TONE_MAX - avg) * ROW_HEIGHT + ROW_HEIGHT / 2;
 }
 
 export function contentBoundsOf(part: VoicePart, pitch: PitchCurve | null): ContentBounds {
-  const endTick = part.notes.reduce(
-    (max, n) => Math.max(max, n.position + n.duration),
-    part.duration,
-  );
   return {
     startTick: Math.min(0, pitch?.startTick ?? 0),
-    endTick,
+    endTick: partEndTick(part),
     height: CONTENT_HEIGHT,
   };
 }
