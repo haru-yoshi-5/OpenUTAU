@@ -1,5 +1,5 @@
 import { Loader2, Trash2 } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
@@ -157,6 +157,9 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
   const preset = usePresetStore(
     useShallow((s) => ({ id: s.presetId, strength: s.strength, previewing: s.previewing })),
   );
+  // スライダーを動かしている間は、候補の作り直し（全体への差分の適用とピッチの計算）を後回しにして、
+  // スライダーの反応を優先する。採用するのも、この値で作った候補
+  const strength = useDeferredValue(preset.strength);
   const candidateChanges = useMemo(
     () =>
       preset.previewing && part
@@ -167,20 +170,10 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
             selected,
             timeAxis,
             preset.id,
-            preset.strength / 100,
+            strength / 100,
           )
         : [],
-    [
-      preset.previewing,
-      preset.id,
-      preset.strength,
-      part,
-      original,
-      partIndex,
-      edits,
-      selected,
-      timeAxis,
-    ],
+    [preset.previewing, preset.id, strength, part, original, partIndex, edits, selected, timeAxis],
   );
   const candidate = useMemo(() => {
     if (candidateChanges.length === 0 || !part) return null;
@@ -197,7 +190,7 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
       const { label } = PRESETS[preset.id];
       useEditStore
         .getState()
-        .apply(`プリセット「${label}」（強さ ${preset.strength}%）`, candidateChanges);
+        .apply(`プリセット「${label}」（強さ ${strength}%）`, candidateChanges);
       usePresetStore.getState().stopPreview();
     } catch (e) {
       setEditError(e instanceof UstxError ? e.message : "編集中に予期しないエラーが発生しました。");

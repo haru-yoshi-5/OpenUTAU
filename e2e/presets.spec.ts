@@ -90,7 +90,21 @@ test("キーボードだけで、プリセットを選んで採用できる", as
   await expect(panel(page).getByRole("radio", { name: "力強く" })).toBeChecked();
   await panel(page).getByRole("button", { name: "候補を表示" }).focus();
   await page.keyboard.press("Enter");
-  await panel(page).getByRole("button", { name: "採用" }).focus();
+  // 押したボタンは消えるので、フォーカスは置き換わった「採用」へ移る
+  await expect(panel(page).getByRole("button", { name: "採用" })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(editStatus(page)).toHaveText("12 個のノートを編集中");
+  // 採用したあとは、ふたたび「候補を表示」にフォーカスが戻る
+  await expect(panel(page).getByRole("button", { name: "候補を表示" })).toBeFocused();
+});
+
+test("却下したあとも、キーボードのフォーカスを失わない", async ({ page }) => {
+  await openSample(page);
+  await selectAll(page);
+  await panel(page).getByRole("button", { name: "候補を表示" }).focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await expect(panel(page).getByRole("button", { name: "却下" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(panel(page).getByRole("button", { name: "候補を表示" })).toBeFocused();
 });

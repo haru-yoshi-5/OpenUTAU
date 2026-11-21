@@ -103,6 +103,8 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
     if (load.status !== "loaded") return;
     const count = load.loaded.project.voiceParts.length;
     if (!Number.isInteger(index) || index < 0 || index >= count) return;
+    // 候補は表示していたパートの選択から作るため、別のパートへは持ち越さない
+    if (index !== get().partIndex) usePresetStore.getState().stopPreview();
     set({ partIndex: index });
   },
 

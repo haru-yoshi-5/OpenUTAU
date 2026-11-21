@@ -1,5 +1,5 @@
 import { Check, Eye, X } from "lucide-react";
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Button } from "../../components/ui/button";
 import {
@@ -34,6 +34,28 @@ export function PresetPanel({ selectedCount, changeCount, onAccept }: PresetPane
   const { setPreset, setStrength, startPreview, stopPreview } = usePresetStore.getState();
   const preset = PRESETS[presetId];
   const hasSelection = selectedCount > 0;
+
+  // 押したボタンが消えて置き換わるため、そのままではフォーカスが body に戻る。
+  // ボタンで切り替えたときだけ、置き換わった先のボタンへフォーカスを移す
+  // （ファイルの読み込み直しやパートの切り替えで候補が消えたときは動かさない）
+  const acceptRef = useRef<HTMLButtonElement>(null);
+  const rejectRef = useRef<HTMLButtonElement>(null);
+  const showRef = useRef<HTMLButtonElement>(null);
+  const focusAfterToggle = useRef(false);
+  useEffect(() => {
+    if (!focusAfterToggle.current) return;
+    focusAfterToggle.current = false;
+    const target = previewing
+      ? acceptRef.current && !acceptRef.current.disabled
+        ? acceptRef.current
+        : rejectRef.current
+      : showRef.current;
+    target?.focus();
+  }, [previewing]);
+  const toggleBy = (action: () => void) => () => {
+    focusAfterToggle.current = true;
+    action();
+  };
 
   const status = !hasSelection
     ? "ピアノロールかノート一覧でノートを選ぶと、プリセットを試せます。"
@@ -110,24 +132,26 @@ export function PresetPanel({ selectedCount, changeCount, onAccept }: PresetPane
           {previewing ? (
             <>
               <Button
+                ref={acceptRef}
                 size="sm"
-                onClick={onAccept}
+                onClick={toggleBy(onAccept)}
                 disabled={changeCount === 0}
                 aria-describedby={statusId}
               >
                 <Check aria-hidden />
                 採用
               </Button>
-              <Button size="sm" variant="outline" onClick={stopPreview}>
+              <Button ref={rejectRef} size="sm" variant="outline" onClick={toggleBy(stopPreview)}>
                 <X aria-hidden />
                 却下
               </Button>
             </>
           ) : (
             <Button
+              ref={showRef}
               size="sm"
               variant="outline"
-              onClick={startPreview}
+              onClick={toggleBy(startPreview)}
               disabled={!hasSelection}
               aria-describedby={statusId}
             >

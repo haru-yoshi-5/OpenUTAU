@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { noteKey } from "../lib/ustx/edits";
 import { vibratoSchema } from "../lib/ustx/types";
 import { useEditStore } from "./edit-store";
+import { usePresetStore } from "./preset-store";
 import { useProjectStore } from "./project-store";
 
 const vibratoDefaults = vibratoSchema.parse({});
@@ -73,6 +74,15 @@ describe("useProjectStore", () => {
     store.getState().selectPart(-1);
     store.getState().selectPart(0.5);
     expect(store.getState().partIndex).toBe(1);
+  });
+
+  it("別のパートに切り替えると、プリセットの候補の表示をやめる", async () => {
+    await store.getState().loadBytes("demo.ustx", async () => demoBytes);
+    usePresetStore.getState().startPreview();
+    store.getState().selectPart(0);
+    expect(usePresetStore.getState().previewing).toBe(true);
+    store.getState().selectPart(1);
+    expect(usePresetStore.getState().previewing).toBe(false);
   });
 
   it("別のファイルを読み込んだとき・破棄したときに、編集差分と履歴を捨てる", async () => {
