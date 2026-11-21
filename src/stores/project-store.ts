@@ -3,6 +3,7 @@ import { UstxError } from "../lib/ustx/errors";
 import { serializeVerified } from "../lib/ustx/export";
 import { LIMITS, type LoadedUstx, loadUstx, validateFileMeta } from "../lib/ustx/load";
 import { useEditStore } from "./edit-store";
+import { usePresetStore } from "./preset-store";
 import { useSelectionStore } from "./selection-store";
 
 /** 読み込み直後に行う、再シリアライズの互換性チェック結果 */
@@ -69,6 +70,7 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       // 差分は読み込んだファイルのノート番号に結び付くため、別のファイルに持ち越さない
       useEditStore.getState().reset(loaded.project);
       useSelectionStore.getState().clear();
+      usePresetStore.getState().reset();
       set({ load: { status: "loaded", loaded, roundTrip }, partIndex: 0 });
     } catch (e) {
       if (request !== latestRequest) return;
@@ -108,6 +110,7 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
     latestRequest++;
     useEditStore.getState().reset(null);
     useSelectionStore.getState().clear();
+    usePresetStore.getState().reset();
     set({ load: { status: "idle" }, partIndex: 0 });
   },
 }));
