@@ -1,5 +1,6 @@
 import { Loader2, Trash2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
@@ -16,8 +17,13 @@ import { partEndTick } from "../../lib/ustx/part";
 import { renderPartPitch } from "../../lib/ustx/pitch";
 import { TimeAxis } from "../../lib/ustx/time-axis";
 import { detectUnsupported } from "../../lib/ustx/unsupported";
+import { PRESETS } from "../../lib/tuning/presets";
 import { useEditStore } from "../../stores/edit-store";
+import { usePresetStore } from "../../stores/preset-store";
 import { type RoundTripStatus, useProjectStore } from "../../stores/project-store";
+import { selectedNotesIn, useSelectionStore } from "../../stores/selection-store";
+import { buildPresetChanges, withCandidate } from "../presets/candidate";
+import { PresetPanel } from "../presets/PresetPanel";
 import { DiscardDialog } from "./DiscardDialog";
 import { EditToolbar } from "./EditToolbar";
 import { ExportPanel } from "./ExportPanel";
@@ -146,6 +152,37 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
   const unsupported = useMemo(() => detectUnsupported(original), [original]);
   const part = project.voiceParts[partIndex];
   const pitch = useMemo(() => (part ? renderPartPitch(part, timeAxis) : null), [part, timeAxis]);
+  // プリセットの候補。表示している間は、選択・プリセット・強さ・編集の変更に合わせて作り直す
+  const selected = useSelectionStore((s) => selectedNotesIn(s, partIndex));
+  const preset = usePresetStore(
+    useShallow((s) => ({ id: s.presetId, strength: s.strength, previewing: s.previewing })),
+  );
+  const candidateChanges = useMemo(
+    () =>
+      preset.previewing && part
+        ? buildPresetChanges(part, edits, selected, timeAxis, preset.id, preset.strength / 100)
+        : [],
+    [preset.previewing, preset.id, preset.strength, part, edits, selected, timeAxis],
+  );
+  const candidatePitch = useMemo(() => {
+    if (candidateChanges.length === 0) return null;
+    const candidateProject = applyEditsToProject(original, withCandidate(edits, candidateChanges));
+    return renderPartPitch(candidateProject.voiceParts[partIndex], timeAxis);
+  }, [candidateChanges, original, edits, partIndex, timeAxis]);
+
+  const acceptCandidate = () => {
+    setEditError(null);
+    try {
+      const { label } = PRESETS[preset.id];
+      useEditStore
+        .getState()
+        .apply(`プリセット「${label}」（強さ ${preset.strength}%）`, candidateChanges);
+      usePresetStore.getState().stopPreview();
+    } catch (e) {
+      setEditError(e instanceof UstxError ? e.message : "編集中に予期しないエラーが発生しました。");
+    }
+  };
+
   const editedNotes = useMemo(() => {
     const set = new Set<number>();
     for (const key of edits.keys()) {
@@ -245,6 +282,13 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
             </nav>
             {/* ほかのパートで編集した内容も戻せるよう、表示中のパートに関係なく出す */}
             <EditToolbar />
+            {part && part.notes.length > 0 && (
+              <PresetPanel
+                selectedCount={selected.size}
+                changeCount={candidateChanges.length}
+                onAccept={acceptCandidate}
+              />
+            )}
             {editError && (
               <Alert tone="error" title="編集できませんでした">
                 <p>{editError}</p>
@@ -258,6 +302,7 @@ function LoadedView({ loaded, roundTrip, onDiscard }: LoadedProps & { onDiscard:
                     bars={bars}
                     tempos={project.tempos}
                     pitch={pitch}
+                    candidatePitch={candidatePitch}
                     // 編集では表示位置を保ち、パートやファイルが変わったときだけ先頭へ戻す
                     resetKey={original.voiceParts[partIndex]}
                   />

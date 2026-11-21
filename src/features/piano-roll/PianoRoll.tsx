@@ -38,6 +38,8 @@ interface PianoRollProps {
   bars: readonly Bar[];
   tempos: readonly Tempo[];
   pitch: PitchCurve | null;
+  /** プリセットの候補のピッチカーブ。今のカーブに点線で重ねる（無ければ null） */
+  candidatePitch?: PitchCurve | null;
   /**
    * これが変わったときだけ、表示位置を先頭に戻す（パートの切り替え・ファイルの読み込み）。
    * 編集で part や pitch が変わっても、表示位置は保つ
@@ -45,7 +47,14 @@ interface PianoRollProps {
   resetKey: unknown;
 }
 
-export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProps) {
+export function PianoRoll({
+  part,
+  bars,
+  tempos,
+  pitch,
+  candidatePitch = null,
+  resetKey,
+}: PianoRollProps) {
   const containerRef = useRef<HTMLElement>(null);
   const helpId = useId();
   const theme = useRollTheme();
@@ -182,6 +191,10 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
   const lines = gridLines(bars, part.position, fromTick, toTick);
   const notes = visibleNotes(part.notes, maxDuration, fromTick, toTick);
   const pitchLines = showPitch && pitch ? pitchPolylines(pitch, cam, fromTick, toTick) : [];
+  // 候補は見比べるためのものなので、「ピッチカーブを表示」がオフでも描く
+  const candidateLines = candidatePitch
+    ? pitchPolylines(candidatePitch, cam, fromTick, toTick)
+    : [];
   const tempoMarks = tempos
     .map((t) => ({ ...t, rel: t.position - part.position }))
     .filter((t) => t.rel >= fromTick - 2000 && t.rel <= toTick);
@@ -240,6 +253,16 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
             />
             ピッチ（OpenUtau の計算を近似）
           </li>
+          {candidatePitch && (
+            <li className="flex items-center gap-1">
+              <span
+                aria-hidden="true"
+                className="inline-block h-0 w-4 border-t-2 border-dashed"
+                style={{ borderColor: theme.candidateLine }}
+              />
+              プリセットの候補
+            </li>
+          )}
         </ul>
       </div>
 
@@ -363,6 +386,23 @@ export function PianoRoll({ part, bars, tempos, pitch, resetKey }: PianoRollProp
                     points={points}
                     stroke={theme.pitchLine}
                     strokeWidth={1.5}
+                    lineJoin="round"
+                    lineCap="round"
+                    perfectDrawEnabled={false}
+                  />
+                ))}
+                {candidateLines.map((points, i) => (
+                  <Line
+                    // oxlint-disable-next-line react/no-array-index-key -- 区間は描画ごとに作り直すため順序で識別する
+                    key={`c${i}`}
+                    points={points}
+                    stroke={theme.candidateLine}
+                    strokeWidth={2.5}
+                    dash={[6, 4]}
+                    // 選択中のノート（塗りつぶし）の上でも見分けられるよう、背景色で縁取る
+                    shadowColor={theme.background}
+                    shadowBlur={3}
+                    shadowOpacity={1}
                     lineJoin="round"
                     lineCap="round"
                     perfectDrawEnabled={false}
