@@ -18,6 +18,16 @@ export interface RollTheme {
   noteBorder: string;
   noteText: string;
   pitchLine: string;
+  /** 選択中のノート */
+  noteSelected: string;
+  noteSelectedBorder: string;
+  noteSelectedText: string;
+  /** 小節範囲・矩形選択の塗り */
+  selectionBand: string;
+  /** 矩形選択の枠 */
+  selectionStroke: string;
+  /** ルーラー上の小節範囲 */
+  selectionRuler: string;
 }
 
 const light: RollTheme = {
@@ -37,6 +47,12 @@ const light: RollTheme = {
   noteBorder: "#3b6fc4",
   noteText: "#172554",
   pitchLine: "#e0453a",
+  noteSelected: "#f59e0b",
+  noteSelectedBorder: "#b45309",
+  noteSelectedText: "#1c1917",
+  selectionBand: "rgba(245, 158, 11, 0.12)",
+  selectionStroke: "#b45309",
+  selectionRuler: "rgba(245, 158, 11, 0.35)",
 };
 
 const dark: RollTheme = {
@@ -56,6 +72,12 @@ const dark: RollTheme = {
   noteBorder: "#8db4f0",
   noteText: "#eef4ff",
   pitchLine: "#ff8a70",
+  noteSelected: "#fbbf24",
+  noteSelectedBorder: "#fde68a",
+  noteSelectedText: "#1c1917",
+  selectionBand: "rgba(251, 191, 36, 0.14)",
+  selectionStroke: "#fde68a",
+  selectionRuler: "rgba(251, 191, 36, 0.35)",
 };
 
 const QUERY = "(prefers-color-scheme: dark)";
