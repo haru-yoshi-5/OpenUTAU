@@ -223,6 +223,7 @@ test("時間順に並んでいないピッチ点も、同じ点を続けて編�
     buffer: Buffer.from(stringify(project)),
   });
   await expect(page.getByRole("heading", { name: "KOEBIT デモ" })).toBeVisible();
+  await expect(page.getByText(/ピッチ点が時間順に並んでいなかったため/)).toBeVisible();
   await page.getByRole("application").scrollIntoViewIfNeeded();
   await page.waitForFunction(() => window.__koebitTest !== undefined);
   await clickNote(page, 1);
@@ -237,4 +238,58 @@ test("時間順に並んでいないピッチ点も、同じ点を続けて編�
     { x: -25, y: 0, shape: "io" },
     { x: 25, y: 2, shape: "io" },
   ]);
+});
+
+test("ドラッグを始めても、点はカーソルの位置へ飛ばず、動かした分だけ動く", async ({ page }) => {
+  await openSelectedNote(page);
+  const before = (await point(page).boundingBox())!;
+  const cx = before.x + before.width / 2;
+  const cy = before.y + before.height / 2;
+  // 点の中心から右下へ 5px ずれた所を押して、真上へ 24px 動かす
+  await page.mouse.move(cx + 5, cy + 5);
+  await page.mouse.down();
+  await page.mouse.move(cx + 5, cy + 5 - 24, { steps: 6 });
+  await page.mouse.up();
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  const after = (await point(page).boundingBox())!;
+  // 音高は 10 cent 単位に丸めるため、縦は数 px の誤差を許す
+  expect(Math.abs(after.x + after.width / 2 - cx)).toBeLessThan(2);
+  expect(Math.abs(after.y + after.height / 2 - (cy - 24))).toBeLessThan(4);
+});
+
+test("確定前のビブラート入力があっても、「やり直す」はやり直しの履歴どおりに動く", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  const original = await length.inputValue();
+  await length.fill("60");
+  await page.getByRole("button", { name: "やり直す", exact: true }).click();
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await expect(length).toHaveValue(original);
+  await expect(page.getByRole("button", { name: "やり直す", exact: true })).toBeDisabled();
+});
+
+test("「ピッチカーブを表示」をオフにすると、ピッチ点も隠して案内を出す", async ({ page }) => {
+  await openSelectedNote(page);
+  await page.getByRole("checkbox", { name: "ピッチカーブを表示" }).uncheck();
+  await expect(point(page)).toBeHidden();
+  await expect(page.getByText(/「ピッチカーブを表示」をオンにすると/)).toBeVisible();
+  await page.getByRole("checkbox", { name: "ピッチカーブを表示" }).check();
+  await expect(point(page)).toBeVisible();
+});
+
+test("ノートを 1 つだけ選んでいないときは、選び方を案内する", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "デモ用サンプルを開く" }).click();
+  await expect(page.getByRole("heading", { name: "KOEBIT デモ" })).toBeVisible();
+  const panel = page.getByRole("region", { name: "手動ピッチ編集" });
+  await expect(panel).toContainText("ノートを 1 つだけ選ぶと");
+  await roll(page).focus();
+  await page.keyboard.press("Control+a");
+  await expect(panel).toContainText("（今は 12 個選んでいます）");
 });

@@ -36,6 +36,15 @@ export function normalizePitch(pitch: RawNote["pitch"]): RawNote["pitch"] {
 }
 
 /**
+ * ピッチ点を x の昇順に並べる（同じ x の点は元の順序を保つ）。並んでいれば同じオブジェクトを返す。
+ * 読み込み時に並べ、表示・ピッチ計算・編集で同じ順序を基準にする
+ */
+export function sortPitchPoints(pitch: RawNote["pitch"]): RawNote["pitch"] {
+  if (pitch.data.every((p, i) => i === 0 || pitch.data[i - 1].x <= p.x)) return pitch;
+  return { ...pitch, data: [...pitch.data].sort((a, b) => a.x - b.x) };
+}
+
+/**
  * YAML 上で out が in より後に設定されるか（OpenUtau は YAML のキー順にセッターを呼ぶ）。
  * 片方しか無い場合は、書かれている方が後に設定されたのと同じ結果になる。
  */

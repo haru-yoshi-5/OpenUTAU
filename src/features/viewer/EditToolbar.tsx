@@ -66,6 +66,7 @@ export function EditToolbar() {
         size="sm"
         onClick={undo}
         disabled={!undoLabel}
+        data-history-action
         title={undoLabel ? `元に戻す：${undoLabel}（Ctrl / ⌘ + Z）` : "元に戻す操作はありません"}
       >
         <Undo2 aria-hidden />
@@ -76,6 +77,7 @@ export function EditToolbar() {
         size="sm"
         onClick={redo}
         disabled={!redoLabel}
+        data-history-action
         title={
           redoLabel ? `やり直す：${redoLabel}（Ctrl / ⌘ + Shift + Z）` : "やり直す操作はありません"
         }

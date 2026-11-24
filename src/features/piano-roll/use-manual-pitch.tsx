@@ -9,7 +9,7 @@ import { TimeAxis } from "../../lib/ustx/time-axis";
 import type { PitchPoint, RawNote, Tempo, Vibrato } from "../../lib/ustx/types";
 import { useEditStore } from "../../stores/edit-store";
 import { useSelectionStore } from "../../stores/selection-store";
-import { clampPointTime, pointTime, sortedPitch } from "./manual-pitch";
+import { clampPointTime, pointTime } from "./manual-pitch";
 import {
   centsToY,
   drawingOrigin,
@@ -32,6 +32,9 @@ interface Drag {
   note: number;
   x: number;
   y: number;
+  /** 押した位置から点の中心までのずれ。ドラッグ開始時に点がカーソルへ飛ばないようにする */
+  offsetX: number;
+  offsetY: number;
   moved: boolean;
   /** 座標の基準にするピアノロールの要素 */
   section: Element | null;
@@ -66,6 +69,8 @@ export function useManualPitch(
   cam: Camera,
   selected: ReadonlySet<number>,
   panMode: boolean,
+  /** 「ピッチカーブを表示」。オフのときは点を出さない（見えない曲線を動かさないため） */
+  showPitch: boolean,
 ) {
   const note = selected.size === 1 ? part.notes.find((n) => selected.has(n.index)) : undefined;
   const axis = useMemo(() => new TimeAxis(tempos), [tempos]);
@@ -105,12 +110,26 @@ export function useManualPitch(
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
   }, []);
-  if (!note) return { overlay: null, controls: null, previewPitch: null };
+  if (!note) {
+    return {
+      overlay: null,
+      controls: (
+        <section
+          aria-label="手動ピッチ編集"
+          className="rounded-lg border p-3 text-sm text-muted-foreground"
+        >
+          手動ピッチ編集：ノートを 1 つだけ選ぶと、ピッチ点とビブラートを編集できます。
+          {selected.size > 1 && `（今は ${selected.size} 個選んでいます）`}
+        </section>
+      ),
+      previewPitch: null,
+    };
+  }
   const target = note;
   const key = noteKey(part.index, target.index);
   const preview = draft && draft.edits === edits ? draft.pitch : null;
-  const base = sortedPitch(target.pitch);
-  const pitch = preview ?? base;
+  // ピッチ点は読み込み時と編集の記録時に x の昇順へ並べてあるため、番号もこの順序で付ける
+  const pitch = preview ?? target.pitch;
   const activeIndex = Math.min(active, pitch.data.length - 1);
   // 自動接続中に点を 0 個にすると OpenUtau で開けなくなるため、最後の 1 点は消せない
   const canRemove = pitch.data.length > (pitch.snap_first ? 1 : 0);
@@ -142,8 +161,8 @@ export function useManualPitch(
   const move = (clientX: number, clientY: number, g: Drag) => {
     if (!g.section) return g.pitch;
     const origin = drawingOrigin(g.section);
-    const x = clientX - origin.left - KEY_WIDTH;
-    const y = clientY - origin.top - RULER_HEIGHT;
+    const x = clientX + g.offsetX - origin.left - KEY_WIDTH;
+    const y = clientY + g.offsetY - origin.top - RULER_HEIGHT;
     const tick = x / cam.pxPerTick + cam.scrollTick;
     const ms = pointTime(axis, part.position, target.position, tick);
     const relativeY = Math.round(
@@ -213,15 +232,18 @@ export function useManualPitch(
           e.currentTarget.focus({ preventScroll: true });
           e.currentTarget.setPointerCapture(e.pointerId);
           setActive(i);
+          const box = e.currentTarget.getBoundingClientRect();
           drag.current = {
             id: e.pointerId,
             index: i,
-            pitch: base,
+            pitch: target.pitch,
             edits: useEditStore.getState().edits,
             part: part.index,
             note: target.index,
             x: e.clientX,
             y: e.clientY,
+            offsetX: box.left + box.width / 2 - e.clientX,
+            offsetY: box.top + box.height / 2 - e.clientY,
             moved: false,
             section: e.currentTarget.closest("section"),
             lastX: e.clientX,
@@ -275,7 +297,7 @@ export function useManualPitch(
   });
   // 描画範囲（鍵盤とルーラーを除いた部分）で切り抜き、点が鍵盤やルーラーに重ならないようにする。
   // overflow: clip はスクロールコンテナを作らないため、範囲外の点にフォーカスしても表示がずれない
-  const overlay = (
+  const overlay = showPitch && (
     <div
       className="pointer-events-none absolute right-0 bottom-0 z-10 overflow-clip"
       style={{ left: KEY_WIDTH, top: RULER_HEIGHT }}
@@ -305,6 +327,7 @@ export function useManualPitch(
       <p>
         手動ピッチ編集：点の位置はノート先頭からのミリ秒、音高は 10 cent
         単位です。点をドラッグ、または矢印キーで移動できます。
+        {!showPitch && "「ピッチカーブを表示」をオンにすると、ピッチ点が表示されます。"}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -460,10 +483,14 @@ function VibratoInput({
           pending.current = e.target.value;
           setDraft(e.target.value);
         }}
-        onBlur={() => {
+        onBlur={(e) => {
           const text = pending.current;
           pending.current = null;
-          if (isNumberText(text)) onCommit(Number(text), false);
+          // 「元に戻す」「やり直す」を押したことでフォーカスが外れた場合は、入力を確定せずに捨てる
+          // （確定すると新しい編集になり、やり直しの履歴が消えてしまうため）
+          const toHistory =
+            e.relatedTarget instanceof Element && e.relatedTarget.closest("[data-history-action]");
+          if (!toHistory && isNumberText(text)) onCommit(Number(text), false);
           setDraft(null);
         }}
         onKeyDown={(e) => {

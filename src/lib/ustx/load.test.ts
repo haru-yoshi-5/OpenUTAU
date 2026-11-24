@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
+import { parse, stringify } from "yaml";
 import { UstxError } from "./errors";
 import { LIMITS, loadUstx } from "./load";
 
@@ -98,6 +99,23 @@ describe("loadUstx: 正常系", () => {
     );
     expect(l.exportable).toBe(false);
     expect(l.warnings[0]).toContain("0.11");
+  });
+
+  it("時間順に並んでいないピッチ点は並べ替え、警告を出す（同じ x の点は元の順序を保つ）", () => {
+    const raw = parse(demoText);
+    raw.voice_parts[0].notes[1].pitch.data = [
+      { x: 25, y: 1, shape: "io" },
+      { x: -25, y: 2, shape: "l" },
+      { x: 25, y: 3, shape: "i" },
+    ];
+    const l = loadUstx("unsorted.ustx", enc(stringify(raw)));
+    expect(l.project.voiceParts[0].notes[1].pitch.data.map((p) => p.y)).toEqual([2, 1, 3]);
+    expect(l.project.voiceParts[0].notes[1].pitch.snap_first).toBe(true);
+    // stringify で版数が 0.1 になり古い形式の警告も出るため、並び順の警告だけを数える
+    const sortWarnings = l.warnings.filter((w) => w.includes("時間順に並んでいなかった"));
+    expect(sortWarnings).toHaveLength(1);
+    expect(sortWarnings[0]).toContain("1 個のノートで");
+    expect(l.exportable).toBe(true);
   });
 
   it("0.9 は 0.10 より古いと判定する（小数比較しない）", () => {

@@ -187,7 +187,7 @@ export function PianoRoll({
     cam,
     scrollBy,
   });
-  const manual = useManualPitch(part, tempos, cam, selected, panMode);
+  const manual = useManualPitch(part, tempos, cam, selected, panMode, showPitch);
   const toneRange = visibleToneRange(cam, height);
   const tones = Array.from(
     { length: Math.max(0, toneRange.high - toneRange.low + 1) },
