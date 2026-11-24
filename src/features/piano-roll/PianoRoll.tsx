@@ -27,6 +27,7 @@ import {
 } from "./geometry";
 import { useRollTheme } from "./theme";
 import { useRollGestures } from "./use-roll-gestures";
+import { useManualPitch } from "./use-manual-pitch";
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif';
 /** ホイールの deltaMode が行単位のときの 1 行あたりの px */
@@ -186,6 +187,7 @@ export function PianoRoll({
     cam,
     scrollBy,
   });
+  const manual = useManualPitch(part, tempos, cam, selected, panMode);
   const toneRange = visibleToneRange(cam, height);
   const tones = Array.from(
     { length: Math.max(0, toneRange.high - toneRange.low + 1) },
@@ -193,7 +195,9 @@ export function PianoRoll({
   );
   const lines = gridLines(bars, part.position, fromTick, toTick);
   const notes = visibleNotes(part.notes, maxDuration, fromTick, toTick);
-  const pitchLines = showPitch && pitch ? pitchPolylines(pitch, cam, fromTick, toTick) : [];
+  const shownPitch = manual.previewPitch ?? pitch;
+  const pitchLines =
+    showPitch && shownPitch ? pitchPolylines(shownPitch, cam, fromTick, toTick) : [];
   // 候補は見比べるためのものなので、「ピッチカーブを表示」がオフでも描く
   const candidateLines = candidate
     ? candidate.ranges
@@ -541,7 +545,9 @@ export function PianoRoll({
             </Layer>
           </Stage>
         </div>
+        {manual.overlay}
       </section>
+      {manual.controls}
       <div id={helpId} className="space-y-0.5 text-xs text-muted-foreground">
         <p>
           選択：ノートをクリック（Shift／Ctrl（⌘）で追加・解除）、何もない所をドラッグで囲む、小節ルーラーをドラッグで小節単位。Ctrl（⌘）＋A
