@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
+import { UstxError } from "../../lib/ustx/errors";
 import type { VoicePart } from "../../lib/ustx/load";
 import { noteKey } from "../../lib/ustx/edits";
 import { adjustedTone, effectivePitchPoints, renderPartPitch } from "../../lib/ustx/pitch";
@@ -7,7 +9,7 @@ import { TimeAxis } from "../../lib/ustx/time-axis";
 import type { PitchPoint, RawNote, Tempo, Vibrato } from "../../lib/ustx/types";
 import { useEditStore } from "../../stores/edit-store";
 import { useSelectionStore } from "../../stores/selection-store";
-import { clampPointTime, pointTime } from "./manual-pitch";
+import { clampPointTime, pointTime, sortedPitch } from "./manual-pitch";
 import {
   centsToY,
   drawingOrigin,
@@ -31,6 +33,18 @@ interface Drag {
   x: number;
   y: number;
   moved: boolean;
+  /** 座標の基準にするピアノロールの要素 */
+  section: Element | null;
+  /** 最後のポインター位置と、プレビュー更新の予約（1 フレームに 1 回にまとめる） */
+  lastX: number;
+  lastY: number;
+  frame: number;
+}
+
+/** ドラッグを終える（予約済みのプレビュー更新も取り消す） */
+function stopDrag(drag: RefObject<Drag | null>) {
+  if (drag.current?.frame) cancelAnimationFrame(drag.current.frame);
+  drag.current = null;
 }
 
 /** 点のボタンが自分で処理するキー（修飾キーなしのときだけ） */
@@ -60,6 +74,7 @@ export function useManualPitch(
   const [active, setActive] = useState(0);
   // プレビューは作成時の編集状態と一緒に保持し、Undo などで編集が変わったら描画時に無効とみなす
   const [draft, setDraft] = useState<{ pitch: Pitch; edits: Edits } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const drag = useRef<Drag | null>(null);
   // 選んでいるノートが変わったら、選択中の点とプレビューを描画時にリセットする
   const noteId = note ? `${part.index}:${note.index}` : null;
@@ -68,13 +83,14 @@ export function useManualPitch(
     setShownFor(noteId);
     setActive(0);
     setDraft(null);
+    setError(null);
   }
   // ドラッグ中に点のボタンが消えた場合（Ctrl+A など）も、ドラッグ状態を残さない
   useEffect(() => {
-    drag.current = null;
+    stopDrag(drag);
   }, [noteId]);
   const cancel = () => {
-    drag.current = null;
+    stopDrag(drag);
     setDraft(null);
   };
   useEffect(() => {
@@ -82,7 +98,7 @@ export function useManualPitch(
       if (e.key === "Escape" && drag.current) {
         e.preventDefault();
         e.stopPropagation();
-        drag.current = null;
+        stopDrag(drag);
         setDraft(null);
       }
     };
@@ -93,27 +109,41 @@ export function useManualPitch(
   const target = note;
   const key = noteKey(part.index, target.index);
   const preview = draft && draft.edits === edits ? draft.pitch : null;
-  const pitch = preview ?? target.pitch;
+  const base = sortedPitch(target.pitch);
+  const pitch = preview ?? base;
   const activeIndex = Math.min(active, pitch.data.length - 1);
   // 自動接続中に点を 0 個にすると OpenUtau で開けなくなるため、最後の 1 点は消せない
   const canRemove = pitch.data.length > (pitch.snap_first ? 1 : 0);
   const previous = part.notes[part.notes.indexOf(target) - 1];
   const displayed = effectivePitchPoints({ ...target, pitch }, previous);
   const startMs = axis.tickToMs(part.position + target.position);
-  const apply = (next: Pitch, label: string) =>
-    useEditStore
-      .getState()
-      .apply(label, [{ key, after: { ...useEditStore.getState().edits.get(key), pitch: next } }]);
+  /**
+   * 編集を記録する。拒否されたらパネルにエラーを表示して false を返す。
+   * quiet のときは表示しない（入力欄が消える時の確定など、対象がもう無いかもしれない場合）
+   */
+  const record = (label: string, change: Partial<RawNote>, quiet = false) => {
+    if (!quiet) setError(null);
+    try {
+      const after = { ...useEditStore.getState().edits.get(key), ...change };
+      useEditStore.getState().apply(label, [{ key, after }]);
+      return true;
+    } catch (e) {
+      if (!quiet) {
+        setError(e instanceof UstxError ? e.message : "編集中に予期しないエラーが発生しました。");
+      }
+      return false;
+    }
+  };
+  const apply = (next: Pitch, label: string) => record(label, { pitch: next });
   const changePoint = (index: number, point: PitchPoint, source = pitch): Pitch => ({
     ...source,
     data: source.data.map((p, i) => (i === index ? point : p)),
   });
-  const move = (e: PointerEvent<HTMLButtonElement>, g: Drag) => {
-    const section = e.currentTarget.closest("section");
-    if (!section) return g.pitch;
-    const origin = drawingOrigin(section);
-    const x = e.clientX - origin.left - KEY_WIDTH;
-    const y = e.clientY - origin.top - RULER_HEIGHT;
+  const move = (clientX: number, clientY: number, g: Drag) => {
+    if (!g.section) return g.pitch;
+    const origin = drawingOrigin(g.section);
+    const x = clientX - origin.left - KEY_WIDTH;
+    const y = clientY - origin.top - RULER_HEIGHT;
     const tick = x / cam.pxPerTick + cam.scrollTick;
     const ms = pointTime(axis, part.position, target.position, tick);
     const relativeY = Math.round(
@@ -132,8 +162,9 @@ export function useManualPitch(
   };
   const remove = (index: number) => {
     if (!canRemove) return;
-    apply({ ...pitch, data: pitch.data.filter((_, i) => i !== index) }, "ピッチ点を削除");
-    setActive(Math.max(0, index - 1));
+    if (apply({ ...pitch, data: pitch.data.filter((_, i) => i !== index) }, "ピッチ点を削除")) {
+      setActive(Math.max(0, index - 1));
+    }
   };
   const pointKey = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
     // Ctrl+Z などのショートカットや Esc（選択の解除）は、ピアノロールとツールバーに任せる
@@ -185,13 +216,17 @@ export function useManualPitch(
           drag.current = {
             id: e.pointerId,
             index: i,
-            pitch: target.pitch,
+            pitch: base,
             edits: useEditStore.getState().edits,
             part: part.index,
             note: target.index,
             x: e.clientX,
             y: e.clientY,
             moved: false,
+            section: e.currentTarget.closest("section"),
+            lastX: e.clientX,
+            lastY: e.clientY,
+            frame: 0,
           };
         }}
         onPointerMove={(e) => {
@@ -202,14 +237,23 @@ export function useManualPitch(
             (g.moved || Math.hypot(e.clientX - g.x, e.clientY - g.y) >= 2)
           ) {
             g.moved = true;
-            setDraft({ pitch: move(e, g), edits: g.edits });
+            g.lastX = e.clientX;
+            g.lastY = e.clientY;
+            // パート全体のピッチを計算し直すため、プレビューの更新は 1 フレームに 1 回にまとめる
+            if (!g.frame) {
+              g.frame = requestAnimationFrame(() => {
+                g.frame = 0;
+                if (drag.current !== g) return;
+                setDraft({ pitch: move(g.lastX, g.lastY, g), edits: g.edits });
+              });
+            }
           }
         }}
         onPointerUp={(e) => {
           e.stopPropagation();
           const g = drag.current;
           if (!g || g.id !== e.pointerId) return;
-          const next = move(e, g);
+          const next = move(e.clientX, e.clientY, g);
           const selection = useSelectionStore.getState();
           const valid =
             useEditStore.getState().edits === g.edits &&
@@ -249,16 +293,12 @@ export function useManualPitch(
     ["drift", "ドリフト"],
     ["vol_link", "音量連動"],
   ];
-  const commitVibrato = (field: keyof Vibrato, value: number) => {
+  const commitVibrato = (field: keyof Vibrato, value: number, quiet: boolean) => {
     const vibrato = { ...target.vibrato, [field]: value };
     // フェードインとフェードアウトは合計 100% まで。後から入力した方を優先し、もう片方を削る
     if (field === "in") vibrato.out = Math.min(vibrato.out, 100 - clamp100(value));
     if (field === "out") vibrato.in = Math.min(vibrato.in, 100 - clamp100(value));
-    useEditStore
-      .getState()
-      .apply("ビブラートを変更", [
-        { key, after: { ...useEditStore.getState().edits.get(key), vibrato } },
-      ]);
+    record("ビブラートを変更", { vibrato }, quiet);
   };
   const controls = (
     <section aria-label="手動ピッチ編集" className="space-y-2 rounded-lg border p-3 text-sm">
@@ -275,8 +315,7 @@ export function useManualPitch(
               ...pitch.data,
               { x: (pitch.data.at(-1)?.x ?? -100) + 100, y: 0, shape: "io" as const },
             ];
-            apply({ ...pitch, data }, "ピッチ点を追加");
-            setActive(data.length - 1);
+            if (apply({ ...pitch, data }, "ピッチ点を追加")) setActive(data.length - 1);
           }}
         >
           ピッチ点を追加
@@ -359,11 +398,16 @@ export function useManualPitch(
               key={`${part.index}:${target.index}:${field}`}
               label={label}
               value={target.vibrato[field]}
-              onCommit={(value) => commitVibrato(field, value)}
+              onCommit={(value, quiet) => commitVibrato(field, value, quiet)}
             />
           ))}
         </div>
       </fieldset>
+      {error && (
+        <Alert tone="error" title="編集できませんでした">
+          {error}
+        </Alert>
+      )}
     </section>
   );
   const previewPitch = preview
@@ -388,7 +432,8 @@ function VibratoInput({
 }: {
   label: string;
   value: number;
-  onCommit: (value: number) => void;
+  /** quiet：入力欄が消える時の確定。対象のノートがもう無いこともあるため、失敗しても表示しない */
+  onCommit: (value: number, quiet: boolean) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   // 確定前の入力。Enter・Tab で確定する前に入力欄が消えた場合（別のノートを選んだ時など）も確定させる
@@ -399,7 +444,7 @@ function VibratoInput({
   });
   useEffect(
     () => () => {
-      if (isNumberText(pending.current)) commitRef.current(Number(pending.current));
+      if (isNumberText(pending.current)) commitRef.current(Number(pending.current), true);
     },
     [],
   );
@@ -418,7 +463,7 @@ function VibratoInput({
         onBlur={() => {
           const text = pending.current;
           pending.current = null;
-          if (isNumberText(text)) onCommit(Number(text));
+          if (isNumberText(text)) onCommit(Number(text), false);
           setDraft(null);
         }}
         onKeyDown={(e) => {

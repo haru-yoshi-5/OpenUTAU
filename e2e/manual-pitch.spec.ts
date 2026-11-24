@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, type Page, test } from "@playwright/test";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 
 const editStatus = (page: Page) => page.getByText(/個のノートを編集中|編集はありません/);
 const point = (page: Page) => page.getByRole("button", { name: "ピッチ点 2", exact: true });
@@ -207,4 +207,34 @@ test("フェードインとフェードアウトは、後から入力した方�
   await fadeIn.press("Enter");
   await expect(fadeIn).toHaveValue("80");
   await expect(fadeOut).toHaveValue("20");
+});
+
+test("時間順に並んでいないピッチ点も、同じ点を続けて編集できる", async ({ page }) => {
+  const project = parse(await readFile("public/samples/demo.ustx", "utf8"));
+  // 2 番目のノートの点を、時間の逆順（x = 25, -25）で保存したファイルを作る
+  project.voice_parts[0].notes[1].pitch.data = [
+    { x: 25, y: 0, shape: "io" },
+    { x: -25, y: 0, shape: "io" },
+  ];
+  await page.goto("/");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "unsorted.ustx",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from(stringify(project)),
+  });
+  await expect(page.getByRole("heading", { name: "KOEBIT デモ" })).toBeVisible();
+  await page.getByRole("application").scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => window.__koebitTest !== undefined);
+  await clickNote(page, 1);
+  // 「ピッチ点 2」は時間順で 2 番目（x = 25）の点。2 回続けて上げても同じ点を動かす
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowUp");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "編集を反映して書き出す" }).click();
+  const exported = parse(await readFile(await (await downloadPromise).path(), "utf8"));
+  expect(exported.voice_parts[0].notes[1].pitch.data).toEqual([
+    { x: -25, y: 0, shape: "io" },
+    { x: 25, y: 2, shape: "io" },
+  ]);
 });
