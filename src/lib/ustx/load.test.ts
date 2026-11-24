@@ -4,7 +4,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { UstxError } from "./errors";
 import { LIMITS, loadUstx } from "./load";
 
-const demoText = readFileSync(join(process.cwd(), "public/samples/demo.ustx"), "utf8");
+// チェックアウト時の改行形式に依存せず、各テストで LF / CRLF を明示する。
+const demoText = readFileSync(join(process.cwd(), "public/samples/demo.ustx"), "utf8").replace(
+  /\r\n/g,
+  "\n",
+);
 const enc = (text: string) => new TextEncoder().encode(text);
 
 /** fn が投げた例外を返す（投げなかった場合は undefined） */
