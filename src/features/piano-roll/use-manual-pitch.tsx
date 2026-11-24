@@ -4,6 +4,7 @@ import { Button } from "../../components/ui/button";
 import { UstxError } from "../../lib/ustx/errors";
 import type { VoicePart } from "../../lib/ustx/load";
 import { noteKey } from "../../lib/ustx/edits";
+import { sortPitchPoints, sortPoints } from "../../lib/ustx/normalize";
 import { adjustedTone, effectivePitchPoints, renderPartPitch } from "../../lib/ustx/pitch";
 import { TimeAxis } from "../../lib/ustx/time-axis";
 import type { PitchPoint, RawNote, Tempo, Vibrato } from "../../lib/ustx/types";
@@ -52,6 +53,8 @@ function stopDrag(drag: RefObject<Drag | null>) {
 
 /** 点のボタンが自分で処理するキー（修飾キーなしのときだけ） */
 const POINT_KEYS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Delete", "Backspace"];
+/** 点を選ぶキー。ボタンの既定動作（クリック）に任せ、ピアノロールには伝えない */
+const SELECT_KEYS = ["Enter", " "];
 
 const SHAPE_LABELS: Record<PitchPoint["shape"], string> = {
   io: "S字 (io)",
@@ -81,6 +84,18 @@ export function useManualPitch(
   const [draft, setDraft] = useState<{ pitch: Pitch; edits: Edits } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const drag = useRef<Drag | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  /** キーボードで点を消した後にフォーカスする点の番号（-1 はピアノロール） */
+  const focusAfter = useRef<number | null>(null);
+  useEffect(() => {
+    const index = focusAfter.current;
+    if (index === null) return;
+    focusAfter.current = null;
+    const container = overlayRef.current;
+    const button = container?.querySelectorAll<HTMLButtonElement>("button")[index];
+    const target = button ?? container?.closest<HTMLElement>("section");
+    target?.focus({ preventScroll: true });
+  });
   // 選んでいるノートが変わったら、選択中の点とプレビューを描画時にリセットする
   const noteId = note ? `${part.index}:${note.index}` : null;
   const [shownFor, setShownFor] = useState(noteId);
@@ -128,13 +143,18 @@ export function useManualPitch(
   const target = note;
   const key = noteKey(part.index, target.index);
   const preview = draft && draft.edits === edits ? draft.pitch : null;
-  // ピッチ点は読み込み時と編集の記録時に x の昇順へ並べてあるため、番号もこの順序で付ける
-  const pitch = preview ?? target.pitch;
+  // 読み込んだ点は OpenUtau と同じく保存順のまま扱うが、編集の記録時は x の昇順に並べ替えられる。
+  // 番号と編集は記録時と同じ昇順を基準にする
+  const unsorted = sortPitchPoints(target.pitch) !== target.pitch;
+  const pitch = preview ?? sortPitchPoints(target.pitch);
   const activeIndex = Math.min(active, pitch.data.length - 1);
   // 自動接続中に点を 0 個にすると OpenUtau で開けなくなるため、最後の 1 点は消せない
   const canRemove = pitch.data.length > (pitch.snap_first ? 1 : 0);
   const previous = part.notes[part.notes.indexOf(target) - 1];
-  const displayed = effectivePitchPoints({ ...target, pitch }, previous);
+  // 先頭点の自動接続は、曲線と同じく保存順の先頭に当ててから、番号の順序（昇順）に並べる
+  const displayed = sortPoints(
+    effectivePitchPoints({ ...target, pitch: preview ?? target.pitch }, previous),
+  );
   const startMs = axis.tickToMs(part.position + target.position);
   /**
    * 編集を記録する。拒否されたらパネルにエラーを表示して false を返す。
@@ -183,16 +203,26 @@ export function useManualPitch(
     if (!canRemove) return;
     if (apply({ ...pitch, data: pitch.data.filter((_, i) => i !== index) }, "ピッチ点を削除")) {
       setActive(Math.max(0, index - 1));
+      return true;
     }
+    return false;
   };
   const pointKey = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
     // Ctrl+Z などのショートカットや Esc（選択の解除）は、ピアノロールとツールバーに任せる
-    if (e.ctrlKey || e.metaKey || e.altKey || !POINT_KEYS.includes(e.key)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (SELECT_KEYS.includes(e.key)) {
+      // Space はピアノロールが表示の移動に使い、既定動作を止めるため、伝えずにここで選ぶ
+      e.stopPropagation();
+      setActive(index);
+      return;
+    }
+    if (!POINT_KEYS.includes(e.key)) return;
     e.preventDefault();
     e.stopPropagation();
     setActive(index);
     if (e.key === "Delete" || e.key === "Backspace") {
-      remove(index);
+      // 消した点のボタンが無くなってもキーボード操作を続けられるよう、前の点へフォーカスを移す
+      if (remove(index)) focusAfter.current = pitch.data.length > 1 ? Math.max(0, index - 1) : -1;
       return;
     }
     const p = pitch.data[index];
@@ -226,6 +256,7 @@ export function useManualPitch(
           pointerEvents: panMode ? "none" : "auto",
         }}
         onKeyDown={(e) => pointKey(e, i)}
+        onClick={() => setActive(i)}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.stopPropagation();
@@ -236,7 +267,7 @@ export function useManualPitch(
           drag.current = {
             id: e.pointerId,
             index: i,
-            pitch: target.pitch,
+            pitch,
             edits: useEditStore.getState().edits,
             part: part.index,
             note: target.index,
@@ -299,6 +330,7 @@ export function useManualPitch(
   // overflow: clip はスクロールコンテナを作らないため、範囲外の点にフォーカスしても表示がずれない
   const overlay = showPitch && (
     <div
+      ref={overlayRef}
       className="pointer-events-none absolute right-0 bottom-0 z-10 overflow-clip"
       style={{ left: KEY_WIDTH, top: RULER_HEIGHT }}
     >
@@ -329,6 +361,12 @@ export function useManualPitch(
         単位です。点をドラッグ、または矢印キーで移動できます。
         {!showPitch && "「ピッチカーブを表示」をオンにすると、ピッチ点が表示されます。"}
       </p>
+      {unsorted && (
+        <Alert tone="warning" title="ピッチ点が時間順に並んでいません">
+          OpenUtau
+          は保存された順序のまま曲線を作ります。このノートのピッチを編集すると、時間順に並べ替えて記録するため、動かした点以外も曲線の形が変わることがあります。
+        </Alert>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
@@ -471,6 +509,19 @@ function VibratoInput({
     },
     [],
   );
+  // 「元に戻す」「やり直す」を押した時は、確定前の入力を捨てる（確定すると新しい編集になり、
+  // やり直しの履歴が消えるため）。pointerdown は blur より先に起き、ボタンにフォーカスが
+  // 移らないブラウザ（Safari など）でも同じように働く
+  useEffect(() => {
+    const onPointerDown = (e: globalThis.PointerEvent) => {
+      if (e.target instanceof Element && e.target.closest("[data-history-action]")) {
+        pending.current = null;
+        setDraft(null);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
   return (
     <label>
       {label}{" "}
@@ -483,14 +534,10 @@ function VibratoInput({
           pending.current = e.target.value;
           setDraft(e.target.value);
         }}
-        onBlur={(e) => {
+        onBlur={() => {
           const text = pending.current;
           pending.current = null;
-          // 「元に戻す」「やり直す」を押したことでフォーカスが外れた場合は、入力を確定せずに捨てる
-          // （確定すると新しい編集になり、やり直しの履歴が消えてしまうため）
-          const toHistory =
-            e.relatedTarget instanceof Element && e.relatedTarget.closest("[data-history-action]");
-          if (!toHistory && isNumberText(text)) onCommit(Number(text), false);
+          if (isNumberText(text)) onCommit(Number(text), false);
           setDraft(null);
         }}
         onKeyDown={(e) => {

@@ -223,10 +223,18 @@ test("時間順に並んでいないピッチ点も、同じ点を続けて編�
     buffer: Buffer.from(stringify(project)),
   });
   await expect(page.getByRole("heading", { name: "KOEBIT デモ" })).toBeVisible();
-  await expect(page.getByText(/ピッチ点が時間順に並んでいなかったため/)).toBeVisible();
   await page.getByRole("application").scrollIntoViewIfNeeded();
   await page.waitForFunction(() => window.__koebitTest !== undefined);
   await clickNote(page, 1);
+  await expect(page.getByText("ピッチ点が時間順に並んでいません")).toBeVisible();
+  // 曲線と同じく、保存順の先頭（x = 25、番号では 2）を前のノートに接続して表示する。
+  // 前のノートは 3 半音低いため、点 2 は点 1 より下に描かれる
+  const first = (await page
+    .getByRole("button", { name: "ピッチ点 1", exact: true })
+    .boundingBox())!;
+  const second = (await point(page).boundingBox())!;
+  expect(second.x).toBeGreaterThan(first.x);
+  expect(second.y).toBeGreaterThan(first.y + 10);
   // 「ピッチ点 2」は時間順で 2 番目（x = 25）の点。2 回続けて上げても同じ点を動かす
   await point(page).focus();
   await page.keyboard.press("ArrowUp");
@@ -272,6 +280,52 @@ test("確定前のビブラート入力があっても、「やり直す」は�
   await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
   await expect(length).toHaveValue(original);
   await expect(page.getByRole("button", { name: "やり直す", exact: true })).toBeDisabled();
+});
+
+test("ボタンにフォーカスが移らないブラウザでも、確定前の入力でやり直しの履歴を消さない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  const original = await length.inputValue();
+  await length.fill("60");
+  // Safari のクリック：pointerdown の後、フォーカスの移動先が無いまま入力欄の blur が起きる
+  const redo = page.getByRole("button", { name: "やり直す", exact: true });
+  await redo.dispatchEvent("pointerdown", { bubbles: true });
+  await length.evaluate((el) => (el as HTMLInputElement).blur());
+  await redo.click();
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await expect(length).toHaveValue(original);
+  await expect(redo).toBeDisabled();
+});
+
+test("Enter・Space では点を動かさずに選べる", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(point(page)).toHaveAttribute("aria-pressed", "true");
+  const first = page.getByRole("button", { name: "ピッチ点 1", exact: true });
+  await first.focus();
+  await page.keyboard.press("Space");
+  await expect(first).toHaveAttribute("aria-pressed", "true");
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("Delete で点を消すと、前の点にフォーカスが移り、続けて操作できる", async ({ page }) => {
+  await openSelectedNote(page);
+  await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
+  await page.getByRole("button", { name: "ピッチ点 3", exact: true }).focus();
+  await page.keyboard.press("Delete");
+  await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(2);
+  await expect(point(page)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByRole("button", { name: "元に戻す", exact: true })).toHaveAttribute(
+    "title",
+    /ピッチ点を移動/,
+  );
 });
 
 test("「ピッチカーブを表示」をオフにすると、ピッチ点も隠して案内を出す", async ({ page }) => {

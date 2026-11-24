@@ -12,7 +12,7 @@ import {
 } from "yaml";
 import type { z } from "zod";
 import { UstxError } from "./errors";
-import { isOutSetLast, normalizeVibrato, sortPitchPoints } from "./normalize";
+import { isOutSetLast, normalizeVibrato } from "./normalize";
 import {
   type Curve,
   projectSchema,
@@ -302,14 +302,6 @@ function buildProject(
       );
       return false;
     });
-    // OpenUtau は読み込み時にピッチ点を並べ替えないが、補間は x の昇順を前提にしている。
-    // 編集を記録するときは昇順に並べるため、表示と編集の基準をそろえるよう読み込み時に並べる
-    const unsorted = part.notes.filter((n) => sortPitchPoints(n.pitch) !== n.pitch).length;
-    if (unsorted > 0) {
-      warnings.push(
-        `パート「${part.name}」の ${unsorted} 個のノートで、ピッチ点が時間順に並んでいなかったため、並べ替えて表示しています（編集した場合も並べ替えて書き出します）。`,
-      );
-    }
     return {
       index: partIndex,
       name: part.name,
@@ -320,7 +312,6 @@ function buildProject(
         .map((note, index) => ({
           ...note,
           duration: Math.max(10, note.duration),
-          pitch: sortPitchPoints(note.pitch),
           // OpenUtau は読み込み時にビブラートの値を丸める（in と out は YAML のキー順で優先度が決まる）。
           // 表示と編集の基準を OpenUtau の解釈にそろえる
           vibrato: normalizeVibrato(

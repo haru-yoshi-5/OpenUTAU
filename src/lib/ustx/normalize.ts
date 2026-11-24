@@ -37,11 +37,17 @@ export function normalizePitch(pitch: RawNote["pitch"]): RawNote["pitch"] {
 
 /**
  * ピッチ点を x の昇順に並べる（同じ x の点は元の順序を保つ）。並んでいれば同じオブジェクトを返す。
- * 読み込み時に並べ、表示・ピッチ計算・編集で同じ順序を基準にする
+ * 読み込み時は OpenUtau と同じく保存順のまま扱い、編集の記録時（normalizePitch）と同じ順序が要る所で使う
  */
 export function sortPitchPoints(pitch: RawNote["pitch"]): RawNote["pitch"] {
-  if (pitch.data.every((p, i) => i === 0 || pitch.data[i - 1].x <= p.x)) return pitch;
-  return { ...pitch, data: [...pitch.data].sort((a, b) => a.x - b.x) };
+  const data = sortPoints(pitch.data);
+  return data === pitch.data ? pitch : { ...pitch, data };
+}
+
+/** 点の配列を x の昇順に並べる（安定ソート）。並んでいれば同じ配列を返す */
+export function sortPoints<T extends { x: number }>(points: T[]): T[] {
+  if (points.every((p, i) => i === 0 || points[i - 1].x <= p.x)) return points;
+  return [...points].sort((a, b) => a.x - b.x);
 }
 
 /**
