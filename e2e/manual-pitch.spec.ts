@@ -209,9 +209,9 @@ test("フェードインとフェードアウトは、後から入力した方�
   await expect(fadeOut).toHaveValue("20");
 });
 
-test("時間順に並んでいないピッチ点も、同じ点を続けて編集できる", async ({ page }) => {
+/** 2 番目のノートの点を、時間の逆順（x = 25, -25）で保存したファイルを開いて、そのノートを選ぶ */
+async function openUnsortedNote(page: Page) {
   const project = parse(await readFile("public/samples/demo.ustx", "utf8"));
-  // 2 番目のノートの点を、時間の逆順（x = 25, -25）で保存したファイルを作る
   project.voice_parts[0].notes[1].pitch.data = [
     { x: 25, y: 0, shape: "io" },
     { x: -25, y: 0, shape: "io" },
@@ -227,24 +227,48 @@ test("時間順に並んでいないピッチ点も、同じ点を続けて編�
   await page.waitForFunction(() => window.__koebitTest !== undefined);
   await clickNote(page, 1);
   await expect(page.getByText("ピッチ点が時間順に並んでいません")).toBeVisible();
-  // 曲線と同じく、保存順の先頭（x = 25、番号では 2）を前のノートに接続して表示する。
-  // 前のノートは 3 半音低いため、点 2 は点 1 より下に描かれる
+}
+
+async function exportedPitch(page: Page) {
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "編集を反映して書き出す" }).click();
+  const exported = parse(await readFile(await (await downloadPromise).path(), "utf8"));
+  return exported.voice_parts[0].notes[1].pitch;
+}
+
+test("時間順に並んでいない点は、曲線と同じく保存順の先頭を接続して表示する", async ({ page }) => {
+  await openUnsortedNote(page);
+  // 保存順の先頭（x = 25、番号では 2）を前のノートに接続する。前のノートは 3 半音低いため、点 2 は点 1 より下
   const first = (await page
     .getByRole("button", { name: "ピッチ点 1", exact: true })
     .boundingBox())!;
   const second = (await point(page).boundingBox())!;
   expect(second.x).toBeGreaterThan(first.x);
   expect(second.y).toBeGreaterThan(first.y + 10);
-  // 「ピッチ点 2」は時間順で 2 番目（x = 25）の点。2 回続けて上げても同じ点を動かす
+});
+
+test("時間順に並んでいない点でも、接続して見える点の高さは変えない", async ({ page }) => {
+  await openUnsortedNote(page);
+  const before = (await point(page).boundingBox())!;
   await point(page).focus();
   await page.keyboard.press("ArrowUp");
-  await page.keyboard.press("ArrowUp");
-  const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "編集を反映して書き出す" }).click();
-  const exported = parse(await readFile(await (await downloadPromise).path(), "utf8"));
-  expect(exported.voice_parts[0].notes[1].pitch.data).toEqual([
+  // 接続している点 2（x = 25）の高さは変えない。並び順は元データと比べる時にも並べ替えるため、編集にならない
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  const after = (await point(page).boundingBox())!;
+  expect(after.y).toBeCloseTo(before.y, 1);
+});
+
+test("時間順に並んでいない点で自動接続を外すと、接続して見えていた点の高さを残す", async ({
+  page,
+}) => {
+  await openUnsortedNote(page);
+  await page.getByRole("checkbox", { name: "先頭点を前のノートに接続" }).uncheck();
+  const pitch = await exportedPitch(page);
+  expect(pitch.snap_first).toBe(false);
+  // 前のノートとの音高差（-3 半音 = -30）が、接続して見えていた点 2（x = 25）に入る
+  expect(pitch.data).toEqual([
     { x: -25, y: 0, shape: "io" },
-    { x: 25, y: 2, shape: "io" },
+    { x: 25, y: -30, shape: "io" },
   ]);
 });
 
@@ -346,4 +370,42 @@ test("ノートを 1 つだけ選んでいないときは、選び方を案内�
   await roll(page).focus();
   await page.keyboard.press("Control+a");
   await expect(panel).toContainText("（今は 12 個選んでいます）");
+});
+
+test("押せない「やり直す」を押しても、確定前の入力は消えずに確定する", async ({ page }) => {
+  await openSelectedNote(page);
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  await length.fill("60");
+  const redo = page.getByRole("button", { name: "やり直す", exact: true });
+  await expect(redo).toBeDisabled();
+  const box = (await redo.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await expect(length).toHaveValue("60");
+});
+
+test("「元に戻す」を押したまま外へずらしてやめると、確定前の入力は確定する", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  await length.fill("60");
+  const undo = page.getByRole("button", { name: "元に戻す", exact: true });
+  const box = (await undo.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height + 80, { steps: 4 });
+  await page.mouse.up();
+  await expect(length).toHaveValue("60");
+  await expect(undo).toHaveAttribute("title", /ビブラートを変更/);
+});
+
+test("点で Space を押している間も、点をドラッグできる", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.down("Space");
+  await startDrag(page);
+  await page.mouse.up();
+  await page.keyboard.up("Space");
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
 });

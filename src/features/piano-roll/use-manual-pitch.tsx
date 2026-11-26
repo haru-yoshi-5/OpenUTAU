@@ -33,6 +33,8 @@ interface Drag {
   note: number;
   x: number;
   y: number;
+  /** 自動接続で高さが決まる点の番号（無ければ -1）。この点は高さを変えない */
+  snapIndex: number;
   /** 押した位置から点の中心までのずれ。ドラッグ開始時に点がカーソルへ飛ばないようにする */
   offsetX: number;
   offsetY: number;
@@ -147,6 +149,8 @@ export function useManualPitch(
   // 番号と編集は記録時と同じ昇順を基準にする
   const unsorted = sortPitchPoints(target.pitch) !== target.pitch;
   const pitch = preview ?? sortPitchPoints(target.pitch);
+  // 自動接続で高さが決まる点の番号。曲線と同じく保存順の先頭の点（並べ替えても同じオブジェクト）
+  const snapIndex = !pitch.snap_first ? -1 : preview ? 0 : pitch.data.indexOf(target.pitch.data[0]);
   const activeIndex = Math.min(active, pitch.data.length - 1);
   // 自動接続中に点を 0 個にすると OpenUtau で開けなくなるため、最後の 1 点は消せない
   const canRemove = pitch.data.length > (pitch.snap_first ? 1 : 0);
@@ -194,7 +198,7 @@ export function useManualPitch(
       {
         ...old,
         x: clampPointTime(g.pitch.data, g.index, ms),
-        y: g.index === 0 && g.pitch.snap_first ? old.y : relativeY,
+        y: g.index === g.snapIndex ? old.y : relativeY,
       },
       g.pitch,
     );
@@ -230,7 +234,7 @@ export function useManualPitch(
     const dy = e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0;
     const x = clampPointTime(pitch.data, index, p.x + dx);
     apply(
-      changePoint(index, { ...p, x, y: index === 0 && pitch.snap_first ? p.y : p.y + dy }),
+      changePoint(index, { ...p, x, y: index === snapIndex ? p.y : p.y + dy }),
       "ピッチ点を移動",
     );
   };
@@ -268,6 +272,7 @@ export function useManualPitch(
             id: e.pointerId,
             index: i,
             pitch,
+            snapIndex,
             edits: useEditStore.getState().edits,
             part: part.index,
             note: target.index,
@@ -435,7 +440,9 @@ export function useManualPitch(
                   snap_first: e.target.checked,
                   data:
                     !e.target.checked && pitch.snap_first
-                      ? pitch.data.map((p, i) => (i === 0 ? { ...p, y: displayed[0].y } : p))
+                      ? pitch.data.map((p, i) =>
+                          i === snapIndex ? { ...p, y: displayed[snapIndex].y } : p,
+                        )
                       : pitch.data,
                 },
                 "先頭点の自動接続を変更",
@@ -509,18 +516,58 @@ function VibratoInput({
     },
     [],
   );
-  // 「元に戻す」「やり直す」を押した時は、確定前の入力を捨てる（確定すると新しい編集になり、
-  // やり直しの履歴が消えるため）。pointerdown は blur より先に起き、ボタンにフォーカスが
-  // 移らないブラウザ（Safari など）でも同じように働く
+  /**
+   * 「元に戻す」「やり直す」を押している間は、確定を保留する。確定すると新しい編集になり、
+   * やり直しの履歴が消えるため。取り消し・やり直しが実際に行われたら入力を捨て、
+   * クリックをやめた（ボタンの外で離した）場合は通常どおり確定する。
+   * pointerdown は blur より先に起きるため、ボタンにフォーカスが移らないブラウザ（Safari など）でも働く
+   */
+  const awaitingHistory = useRef(false);
+  const flush = (quiet: boolean) => {
+    const text = pending.current;
+    pending.current = null;
+    if (isNumberText(text)) commitRef.current(Number(text), quiet);
+    setDraft(null);
+  };
+  const flushRef = useRef(flush);
+  useEffect(() => {
+    flushRef.current = flush;
+  });
   useEffect(() => {
     const onPointerDown = (e: globalThis.PointerEvent) => {
-      if (e.target instanceof Element && e.target.closest("[data-history-action]")) {
-        pending.current = null;
-        setDraft(null);
+      if (
+        pending.current !== null &&
+        e.target instanceof Element &&
+        e.target.closest("[data-history-action]:not(:disabled)")
+      ) {
+        awaitingHistory.current = true;
       }
     };
+    const onPointerUp = () => {
+      if (!awaitingHistory.current) return;
+      // クリック（取り消し・やり直しの実行）は pointerup と同じタスクで起きるため、その後で確かめる
+      setTimeout(() => {
+        if (!awaitingHistory.current) return;
+        awaitingHistory.current = false;
+        flushRef.current(false);
+      }, 0);
+    };
+    const unsubscribe = useEditStore.subscribe((state, prev) => {
+      if (!awaitingHistory.current) return;
+      if (state.undoStack === prev.undoStack && state.redoStack === prev.redoStack) return;
+      awaitingHistory.current = false;
+      pending.current = null;
+      setDraft(null);
+    });
     document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointerup", onPointerUp, true);
+    document.addEventListener("pointercancel", onPointerUp, true);
+    return () => {
+      unsubscribe();
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointerup", onPointerUp, true);
+      document.removeEventListener("pointercancel", onPointerUp, true);
+    };
   }, []);
   return (
     <label>
@@ -535,10 +582,8 @@ function VibratoInput({
           setDraft(e.target.value);
         }}
         onBlur={() => {
-          const text = pending.current;
-          pending.current = null;
-          if (isNumberText(text)) onCommit(Number(text), false);
-          setDraft(null);
+          // 履歴ボタンを押している間は、離すまで確定を保留する
+          if (!awaitingHistory.current) flush(false);
         }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
