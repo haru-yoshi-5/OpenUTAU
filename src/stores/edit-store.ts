@@ -39,8 +39,10 @@ interface EditState {
    * - 元データと同じ値の項目は差分から外す（どの画面から呼んでも「編集済み」が正しくなるように）
    * - 不正な差分・存在しないノートへの差分は UstxError を投げ、何も変えない
    * 実際に変わるノートが無ければ何も記録しない。
+   * merge を指定すると、直前の操作が同じ名前・同じノートなら 1 つの操作にまとめる
+   * （キーの長押しなどで、細かい変更が履歴を埋めないようにする）。まとめて元に戻ったら履歴から消す。
    */
-  apply: (label: string, changes: readonly EditChange[]) => void;
+  apply: (label: string, changes: readonly EditChange[], options?: { merge?: boolean }) => void;
   undo: () => void;
   redo: () => void;
   /** ファイルを読み込んだとき（source を渡す）・破棄したとき（null）に、差分と履歴を捨てる */
@@ -79,7 +81,7 @@ export const useEditStore = create<EditState>()((set, get) => ({
   undoStack: [],
   redoStack: [],
 
-  apply: (label, changes) => {
+  apply: (label, changes, options) => {
     const { originals, edits, undoStack } = get();
     if (!originals) {
       throw new UstxError("invalid-edit", "編集できるファイルが読み込まれていません。");
@@ -94,6 +96,27 @@ export const useEditStore = create<EditState>()((set, get) => ({
       applied.push({ key, before, after: next });
     }
     if (applied.length === 0) return;
+    const last = undoStack.at(-1);
+    if (
+      options?.merge &&
+      last?.label === label &&
+      last.changes.length === applied.length &&
+      applied.every((c, i) => c.key === last.changes[i].key)
+    ) {
+      // 直前の操作の「変更前」を引き継ぎ、変更後だけを差し替える
+      const merged = applied
+        .map((c, i) => ({ ...c, before: last.changes[i].before }))
+        .filter((c) => isDeepStrictEqual(c.before, c.after) !== null);
+      set({
+        edits: withChanges(edits, applied, "after"),
+        undoStack: [
+          ...undoStack.slice(0, -1),
+          ...(merged.length ? [{ label, changes: merged }] : []),
+        ],
+        redoStack: [],
+      });
+      return;
+    }
     set({
       edits: withChanges(edits, applied, "after"),
       undoStack: [...undoStack, { label, changes: applied }].slice(-HISTORY_LIMIT),

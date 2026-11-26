@@ -76,6 +76,27 @@ describe("useEditStore", () => {
     expect(store.getState().edits.get(a)).toEqual(withVibrato(50));
   });
 
+  it("merge では、直前の同じ名前・同じノートの操作に 1 つへまとめる", () => {
+    store.getState().apply("ビブラート", [{ key: a, after: withVibrato(10) }]);
+    store.getState().apply("移動", [{ key: b, after: withVibrato(20) }]);
+    store.getState().apply("移動", [{ key: b, after: withVibrato(30) }], { merge: true });
+    store.getState().apply("移動", [{ key: b, after: withVibrato(40) }], { merge: true });
+    expect(store.getState().undoStack.map((c) => c.label)).toEqual(["ビブラート", "移動"]);
+    expect(store.getState().edits.get(b)).toEqual(withVibrato(40));
+    store.getState().undo();
+    expect(store.getState().edits.has(b)).toBe(false);
+    expect(store.getState().edits.get(a)).toEqual(withVibrato(10));
+  });
+
+  it("merge は名前かノートが違えば別の操作にし、元に戻ったら履歴から消す", () => {
+    store.getState().apply("移動", [{ key: a, after: withVibrato(10) }]);
+    store.getState().apply("移動", [{ key: b, after: withVibrato(10) }], { merge: true });
+    store.getState().apply("別", [{ key: b, after: withVibrato(20) }], { merge: true });
+    expect(store.getState().undoStack).toHaveLength(3);
+    store.getState().apply("別", [{ key: b, after: withVibrato(10) }], { merge: true });
+    expect(store.getState().undoStack.map((c) => c.label)).toEqual(["移動", "移動"]);
+  });
+
   it("値が変わらない変更は履歴に積まない", () => {
     store.getState().apply("設定", [{ key: a, after: withVibrato(50) }]);
     store.getState().apply("同じ値", [{ key: a, after: withVibrato(50) }]);

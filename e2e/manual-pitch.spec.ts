@@ -247,28 +247,35 @@ test("時間順に並んでいない点は、曲線と同じく保存順の先�
   expect(second.y).toBeGreaterThan(first.y + 10);
 });
 
-test("時間順に並んでいない点でも、接続して見える点の高さは変えない", async ({ page }) => {
+test("時間順に並んでいないノートは、並べ替えるまで点を編集できない", async ({ page }) => {
   await openUnsortedNote(page);
-  const before = (await point(page).boundingBox())!;
-  await point(page).focus();
-  await page.keyboard.press("ArrowUp");
-  // 接続している点 2（x = 25）の高さは変えない。並び順は元データと比べる時にも並べ替えるため、編集にならない
-  await expect(editStatus(page)).toHaveText("編集はありません");
-  const after = (await point(page).boundingBox())!;
-  expect(after.y).toBeCloseTo(before.y, 1);
+  await expect(point(page)).toBeDisabled();
+  await expect(page.getByRole("button", { name: "ピッチ点を追加", exact: true })).toBeDisabled();
+  await expect(page.getByRole("checkbox", { name: "先頭点を前のノートに接続" })).toBeDisabled();
+  await page.getByRole("button", { name: "時間順に並べ替える", exact: true }).click();
+  // 並べ替えは 1 つの編集として記録され、書き出しにも反映される
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await expect(page.getByText("ピッチ点が時間順に並んでいません")).toBeHidden();
+  await expect(point(page)).toBeEnabled();
+  expect((await exportedPitch(page)).data).toEqual([
+    { x: -25, y: 0, shape: "io" },
+    { x: 25, y: 0, shape: "io" },
+  ]);
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  await expect(page.getByText("ピッチ点が時間順に並んでいません")).toBeVisible();
+  await expect(point(page)).toBeDisabled();
 });
 
-test("時間順に並んでいない点で自動接続を外すと、接続して見えていた点の高さを残す", async ({
-  page,
-}) => {
+test("並べ替えた後に自動接続を外すと、接続していた先頭の点の高さを残す", async ({ page }) => {
   await openUnsortedNote(page);
+  await page.getByRole("button", { name: "時間順に並べ替える", exact: true }).click();
   await page.getByRole("checkbox", { name: "先頭点を前のノートに接続" }).uncheck();
   const pitch = await exportedPitch(page);
   expect(pitch.snap_first).toBe(false);
-  // 前のノートとの音高差（-3 半音 = -30）が、接続して見えていた点 2（x = 25）に入る
+  // 前のノートとの音高差（-3 半音 = -30）が、先頭（x = -25）の点に入る
   expect(pitch.data).toEqual([
-    { x: -25, y: 0, shape: "io" },
-    { x: 25, y: -30, shape: "io" },
+    { x: -25, y: -30, shape: "io" },
+    { x: 25, y: 0, shape: "io" },
   ]);
 });
 
@@ -400,12 +407,40 @@ test("「元に戻す」を押したまま外へずらしてやめると、確�
   await expect(undo).toHaveAttribute("title", /ビブラートを変更/);
 });
 
-test("点で Space を押している間も、点をドラッグできる", async ({ page }) => {
+test("点をクリックした後も、Space を押しながらのドラッグで表示を移動できる", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).click();
+  const before = await page.evaluate(() => window.__koebitTest!.noteCenter(0));
+  await page.keyboard.down(" ");
+  await page.mouse.move(before.x + 200, before.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(before.x + 200, before.y - 60, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up(" ");
+  const after = await page.evaluate(() => window.__koebitTest!.noteCenter(0));
+  expect(after.y).toBeLessThan(before.y - 100);
+  // 選択は変わらず、編集中のノートの点が表示されたまま
+  await expect.poll(() => selectedCount(page)).toBe(1);
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("矢印キーは横 5 ms・縦 10 cent、Shift で 10 倍動かす", async ({ page }) => {
   await openSelectedNote(page);
   await point(page).focus();
-  await page.keyboard.down("Space");
-  await startDrag(page);
-  await page.mouse.up();
-  await page.keyboard.up("Space");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Shift+ArrowUp");
+  await page.keyboard.press("Shift+ArrowRight");
+  // デモの 2 番目のノートの点 2 は x = 25, y = 0
+  expect((await exportedPitch(page)).data[1]).toEqual({ x: 80, y: 10, shape: "io" });
+});
+
+test("矢印キーの長押しは、1 回の「元に戻す」でまとめて戻せる", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  for (let i = 0; i < 5; i++) await page.keyboard.down("ArrowUp");
+  await page.keyboard.up("ArrowUp");
   await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  await expect(page.getByRole("button", { name: "元に戻す", exact: true })).toBeDisabled();
 });

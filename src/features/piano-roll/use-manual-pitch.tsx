@@ -146,11 +146,12 @@ export function useManualPitch(
   const key = noteKey(part.index, target.index);
   const preview = draft && draft.edits === edits ? draft.pitch : null;
   // 読み込んだ点は OpenUtau と同じく保存順のまま扱うが、編集の記録時は x の昇順に並べ替えられる。
-  // 番号と編集は記録時と同じ昇順を基準にする
-  const unsorted = sortPitchPoints(target.pitch) !== target.pitch;
+  // 時間順に並んでいないノートは、編集の前後で前のノートに接続される点が入れ替わってしまうため、
+  // 点の編集を止め、先に並べ替え（曲線の形が変わる）を 1 つの編集として確かめてもらう
+  const locked = sortPitchPoints(target.pitch) !== target.pitch;
   const pitch = preview ?? sortPitchPoints(target.pitch);
-  // 自動接続で高さが決まる点の番号。曲線と同じく保存順の先頭の点（並べ替えても同じオブジェクト）
-  const snapIndex = !pitch.snap_first ? -1 : preview ? 0 : pitch.data.indexOf(target.pitch.data[0]);
+  // 自動接続で高さが決まる点の番号（並べ替え後は先頭）
+  const snapIndex = pitch.snap_first ? 0 : -1;
   const activeIndex = Math.min(active, pitch.data.length - 1);
   // 自動接続中に点を 0 個にすると OpenUtau で開けなくなるため、最後の 1 点は消せない
   const canRemove = pitch.data.length > (pitch.snap_first ? 1 : 0);
@@ -164,11 +165,15 @@ export function useManualPitch(
    * 編集を記録する。拒否されたらパネルにエラーを表示して false を返す。
    * quiet のときは表示しない（入力欄が消える時の確定など、対象がもう無いかもしれない場合）
    */
-  const record = (label: string, change: Partial<RawNote>, quiet = false) => {
+  const record = (
+    label: string,
+    change: Partial<RawNote>,
+    { quiet = false, merge = false }: { quiet?: boolean; merge?: boolean } = {},
+  ) => {
     if (!quiet) setError(null);
     try {
       const after = { ...useEditStore.getState().edits.get(key), ...change };
-      useEditStore.getState().apply(label, [{ key, after }]);
+      useEditStore.getState().apply(label, [{ key, after }], { merge });
       return true;
     } catch (e) {
       if (!quiet) {
@@ -177,7 +182,8 @@ export function useManualPitch(
       return false;
     }
   };
-  const apply = (next: Pitch, label: string) => record(label, { pitch: next });
+  const apply = (next: Pitch, label: string, merge = false) =>
+    record(label, { pitch: next }, { merge });
   const changePoint = (index: number, point: PitchPoint, source = pitch): Pitch => ({
     ...source,
     data: source.data.map((p, i) => (i === index ? point : p)),
@@ -215,9 +221,10 @@ export function useManualPitch(
     // Ctrl+Z などのショートカットや Esc（選択の解除）は、ピアノロールとツールバーに任せる
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (SELECT_KEYS.includes(e.key)) {
-      // Space はピアノロールが表示の移動に使い、既定動作を止めるため、伝えずにここで選ぶ
-      e.stopPropagation();
       setActive(index);
+      // Space は「押しながらドラッグで表示を移動」にも使うため、ピアノロールへそのまま伝える
+      // （ピアノロールが既定動作を止めてクリックが起きないので、ここで選ぶ）
+      if (e.key !== " ") e.stopPropagation();
       return;
     }
     if (!POINT_KEYS.includes(e.key)) return;
@@ -230,12 +237,16 @@ export function useManualPitch(
       return;
     }
     const p = pitch.data[index];
-    const dx = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0;
-    const dy = e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0;
+    // 1 回で横 5 ms・縦 10 cent。Shift を押しながらなら 10 倍（50 ms・100 cent）
+    const step = e.shiftKey ? 10 : 1;
+    const dx = (e.key === "ArrowLeft" ? -5 : e.key === "ArrowRight" ? 5 : 0) * step;
+    const dy = (e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0) * step;
     const x = clampPointTime(pitch.data, index, p.x + dx);
+    // 長押し（キーリピート）中の移動は、履歴を埋めないよう直前の移動とまとめる
     apply(
       changePoint(index, { ...p, x, y: index === snapIndex ? p.y : p.y + dy }),
       "ピッチ点を移動",
+      e.repeat,
     );
   };
   const points = displayed.map((p, i) => {
@@ -249,6 +260,7 @@ export function useManualPitch(
         type="button"
         aria-label={`ピッチ点 ${i + 1}`}
         aria-pressed={isActive}
+        disabled={locked}
         className="absolute size-4 rounded-full border-2 focus-visible:outline-2 focus-visible:outline-offset-1"
         style={{
           left: x - 8,
@@ -357,25 +369,37 @@ export function useManualPitch(
     // フェードインとフェードアウトは合計 100% まで。後から入力した方を優先し、もう片方を削る
     if (field === "in") vibrato.out = Math.min(vibrato.out, 100 - clamp100(value));
     if (field === "out") vibrato.in = Math.min(vibrato.in, 100 - clamp100(value));
-    record("ビブラートを変更", { vibrato }, quiet);
+    record("ビブラートを変更", { vibrato }, { quiet });
   };
   const controls = (
     <section aria-label="手動ピッチ編集" className="space-y-2 rounded-lg border p-3 text-sm">
       <p>
         手動ピッチ編集：点の位置はノート先頭からのミリ秒、音高は 10 cent
-        単位です。点をドラッグ、または矢印キーで移動できます。
+        単位です。点をドラッグ、または矢印キー（横 5 ms・縦 10 cent。Shift で 10
+        倍）で移動できます。
         {!showPitch && "「ピッチカーブを表示」をオンにすると、ピッチ点が表示されます。"}
       </p>
-      {unsorted && (
+      {locked && (
         <Alert tone="warning" title="ピッチ点が時間順に並んでいません">
-          OpenUtau
-          は保存された順序のまま曲線を作ります。このノートのピッチを編集すると、時間順に並べ替えて記録するため、動かした点以外も曲線の形が変わることがあります。
+          <p>
+            OpenUtau
+            は保存された順序のまま曲線を作ります。ピッチ点を編集するには、先に時間順へ並べ替えてください。並べ替えると曲線の形が変わることがあります（元に戻すで戻せます）。
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2"
+            onClick={() => apply(sortPitchPoints(target.pitch), "ピッチ点を時間順に並べ替え")}
+          >
+            時間順に並べ替える
+          </Button>
         </Alert>
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
           variant="outline"
+          disabled={locked}
           onClick={() => {
             const data = [
               ...pitch.data,
@@ -389,7 +413,7 @@ export function useManualPitch(
         <Button
           size="sm"
           variant="outline"
-          disabled={!canRemove}
+          disabled={locked || !canRemove}
           onClick={() => remove(activeIndex)}
         >
           ピッチ点を削除
@@ -400,6 +424,7 @@ export function useManualPitch(
             <select
               aria-label="ピッチ点の補間"
               className="h-8 rounded-md border bg-card px-1"
+              disabled={locked}
               value={pitch.data[activeIndex].shape}
               onChange={(e) =>
                 apply(
@@ -432,7 +457,7 @@ export function useManualPitch(
             type="checkbox"
             className="size-4 align-middle"
             checked={pitch.snap_first}
-            disabled={!pitch.data.length}
+            disabled={locked || !pitch.data.length}
             onChange={(e) =>
               apply(
                 {

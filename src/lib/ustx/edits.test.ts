@@ -217,12 +217,15 @@ describe("pruneEdit", () => {
     expect(pruneEdit(original, { pitch, vibrato: original.vibrato })).toEqual({ pitch });
   });
 
-  it("元データのピッチ点が昇順でなくても、並べ替えると同じなら差分にしない", () => {
+  it("元データのピッチ点が昇順でなければ、並べ替えただけでも差分として残す（OpenUtau の曲線が変わるため）", () => {
     const unsorted = {
       ...original,
       pitch: { snap_first: true, data: [...original.pitch.data].reverse() },
     };
-    expect(pruneEdit(unsorted, { pitch: original.pitch })).toBeUndefined();
+    expect(pruneEdit(unsorted, { pitch: original.pitch })).toEqual({ pitch: original.pitch });
+    expect(pruneEdit(unsorted, { pitch: unsorted.pitch })).toEqual({
+      pitch: original.pitch,
+    });
   });
 
   it("元データのビブラートが範囲外でも、読み込み時に丸めた値と同じなら差分にしない", () => {

@@ -41,13 +41,17 @@ export function normalizeEdit(edit: NoteEdit): NoteEdit {
   };
 }
 
-/** ピッチ点を正規化した形で比べる。元データが正規化できない（0 点など）なら、一致しないとみなす */
+/**
+ * ピッチ点が元データと同じかを比べる。点の並び順も比べる。
+ * OpenUtau は保存された順序のまま補間し、先頭の点を前のノートに接続するため、
+ * 並べ替えただけでも曲線が変わる（差分として書き出す必要がある）
+ */
 function samePitch(a: RawNote["pitch"], original: RawNote["pitch"]): boolean {
-  try {
-    return isDeepStrictEqual(a, normalizePitch(original)) === null;
-  } catch {
-    return false;
-  }
+  const raw = {
+    data: original.data.map(({ x, y, shape }) => ({ x, y, shape })),
+    snap_first: original.snap_first,
+  };
+  return isDeepStrictEqual(a, raw) === null;
 }
 
 /**
