@@ -255,6 +255,8 @@ export function useManualPitch(
     e.stopPropagation();
     setActive(index);
     if (e.key === "Delete" || e.key === "Backspace") {
+      // 長押しでは消さない。消した後はフォーカスが前の点へ移るため、キーリピートで次々と消えてしまう
+      if (e.repeat) return;
       // 消した点のボタンが無くなってもキーボード操作を続けられるよう、前の点へフォーカスを移す
       if (remove(index)) focusAfter.current = pitch.data.length > 1 ? Math.max(0, index - 1) : -1;
       return;
@@ -615,11 +617,20 @@ function VibratoInput({
       pending.current = null;
       setDraft(null);
     });
+    // 確定前の入力は記録済みの編集に含まれず、ページを閉じる前の確認の対象にならないため、ここで確認を出す
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!isNumberText(pending.current)) return;
+      e.preventDefault();
+      // 古いブラウザは returnValue の設定で確認を出す
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("pointerup", onPointerUp, true);
     document.addEventListener("pointercancel", onPointerUp, true);
     return () => {
       unsubscribe();
+      window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("pointerup", onPointerUp, true);
       document.removeEventListener("pointercancel", onPointerUp, true);

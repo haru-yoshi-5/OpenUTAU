@@ -501,3 +501,25 @@ test("時間順に並んでいないノートの点は、ドラッグしても�
   await expect(editStatus(page)).toHaveText("編集はありません");
   await expect(page.getByText("ピッチ点が時間順に並んでいません")).toBeVisible();
 });
+
+test("Delete を長押ししても、消えるのは 1 点だけ", async ({ page }) => {
+  await openSelectedNote(page);
+  await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
+  await page.getByRole("button", { name: "ピッチ点 3", exact: true }).focus();
+  for (let i = 0; i < 4; i++) await page.keyboard.down("Delete");
+  await page.keyboard.up("Delete");
+  await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(2);
+});
+
+test("確定前のビブラート入力があるときにページを閉じようとすると、ブラウザの確認が出る", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  await page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true }).fill("60");
+  const dialogPromise = page.waitForEvent("dialog");
+  void page.close({ runBeforeUnload: true });
+  const dialog = await dialogPromise;
+  expect(dialog.type()).toBe("beforeunload");
+  await dialog.dismiss();
+});
