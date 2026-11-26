@@ -53,6 +53,9 @@ function stopDrag(drag: RefObject<Drag | null>) {
   drag.current = null;
 }
 
+/** 矢印キーの長押しを 1 つの操作にまとめるための目印の連番 */
+let holdSeq = 0;
+
 /** 点のボタンが自分で処理するキー（修飾キーなしのときだけ） */
 const POINT_KEYS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Delete", "Backspace"];
 /** 点を選ぶキー。ボタンの既定動作（クリック）に任せ、ピアノロールには伝えない */
@@ -111,6 +114,19 @@ export function useManualPitch(
   useEffect(() => {
     stopDrag(drag);
   }, [noteId]);
+  // 表示の切り替えや表示移動モードで点のボタンが消えると、pointerup が届かずドラッグが残るため、
+  // そのときもドラッグとプレビューを片付ける（プレビューは描画時、ドラッグは effect で）
+  const dragContext = `${showPitch}:${panMode}`;
+  const [contextShown, setContextShown] = useState(dragContext);
+  if (contextShown !== dragContext) {
+    setContextShown(dragContext);
+    setDraft(null);
+  }
+  useEffect(() => {
+    stopDrag(drag);
+  }, [showPitch, panMode]);
+  /** 長押し中の矢印キーの目印。同じ目印の移動は 1 つの操作にまとめる */
+  const holdId = useRef("");
   const cancel = () => {
     stopDrag(drag);
     setDraft(null);
@@ -168,12 +184,12 @@ export function useManualPitch(
   const record = (
     label: string,
     change: Partial<RawNote>,
-    { quiet = false, merge = false }: { quiet?: boolean; merge?: boolean } = {},
+    { quiet = false, mergeId }: { quiet?: boolean; mergeId?: string } = {},
   ) => {
     if (!quiet) setError(null);
     try {
       const after = { ...useEditStore.getState().edits.get(key), ...change };
-      useEditStore.getState().apply(label, [{ key, after }], { merge });
+      useEditStore.getState().apply(label, [{ key, after }], { mergeId });
       return true;
     } catch (e) {
       if (!quiet) {
@@ -182,8 +198,14 @@ export function useManualPitch(
       return false;
     }
   };
-  const apply = (next: Pitch, label: string, merge = false) =>
-    record(label, { pitch: next }, { merge });
+  /**
+   * ピッチの編集を記録する。ドラッグ中は何もしない（キーボードやパネルの操作が、
+   * まだ確定していないドラッグ途中の位置を土台にしてしまうため）
+   */
+  const apply = (next: Pitch, label: string, mergeId?: string) => {
+    if (drag.current) return false;
+    return record(label, { pitch: next }, { mergeId });
+  };
   const changePoint = (index: number, point: PitchPoint, source = pitch): Pitch => ({
     ...source,
     data: source.data.map((p, i) => (i === index ? point : p)),
@@ -242,15 +264,17 @@ export function useManualPitch(
     const dx = (e.key === "ArrowLeft" ? -5 : e.key === "ArrowRight" ? 5 : 0) * step;
     const dy = (e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0) * step;
     const x = clampPointTime(pitch.data, index, p.x + dx);
-    // 長押し（キーリピート）中の移動は、履歴を埋めないよう直前の移動とまとめる
+    // 長押し（キーリピート）中の移動は、履歴を埋めないよう同じ長押しの最初の移動とまとめる
+    if (!e.repeat) holdId.current = `hold-${++holdSeq}`;
     apply(
       changePoint(index, { ...p, x, y: index === snapIndex ? p.y : p.y + dy }),
       "ピッチ点を移動",
-      e.repeat,
+      holdId.current,
     );
   };
   const points = displayed.map((p, i) => {
-    const tick = axis.msToTick(startMs + p.x) - part.position;
+    // 曲線の計算（renderPartPitch）と同じく tick に丸め、点と曲線の折れ目をそろえる
+    const tick = Math.round(axis.msToTick(startMs + p.x)) - part.position;
     const x = tickToX(tick, cam);
     const y = centsToY(adjustedTone(target) * 100 + p.y * 10, cam);
     const isActive = activeIndex === i;
@@ -601,6 +625,7 @@ function VibratoInput({
         aria-label={`ビブラート ${label}`}
         className="h-8 w-20 rounded-md border bg-card px-1"
         type="number"
+        step="any"
         value={draft ?? String(value)}
         onChange={(e) => {
           pending.current = e.target.value;

@@ -444,3 +444,47 @@ test("矢印キーの長押しは、1 回の「元に戻す」でまとめて戻
   await expect(editStatus(page)).toHaveText("編集はありません");
   await expect(page.getByRole("button", { name: "元に戻す", exact: true })).toBeDisabled();
 });
+
+test("ドラッグ中に矢印キーを押しても、確定前の位置を記録しない", async ({ page }) => {
+  await openSelectedNote(page);
+  await startDrag(page);
+  await page.keyboard.press("ArrowUp");
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("矢印キーの長押しは、元に戻した後に古い操作とつながらない", async ({ page }) => {
+  await openSelectedNote(page);
+  // 操作 A：ドラッグで動かす
+  await startDrag(page);
+  await page.mouse.up();
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  // 操作 B：長押しで動かし、押したまま元に戻す
+  await page.getByRole("button", { name: "ピッチ点 1", exact: true }).focus();
+  for (let i = 0; i < 3; i++) await page.keyboard.down("ArrowRight");
+  await page.keyboard.press("Control+z");
+  // 押し続けた続きのキーリピートは、A とまとめず別の操作 C になる
+  await page.keyboard.down("ArrowRight");
+  await page.keyboard.up("ArrowRight");
+  const undo = page.getByRole("button", { name: "元に戻す", exact: true });
+  await undo.click();
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await undo.click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("ドラッグ中に点の表示を消しても、確定前のプレビューを残さない", async ({ page }) => {
+  await openSelectedNote(page);
+  const before = (await point(page).boundingBox())!;
+  await startDrag(page);
+  const toggle = page.getByRole("checkbox", { name: "ピッチカーブを表示" });
+  await toggle.evaluate((el) => (el as HTMLInputElement).click());
+  await page.mouse.up();
+  await toggle.evaluate((el) => (el as HTMLInputElement).click());
+  await expect(point(page)).toBeVisible();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  const after = (await point(page).boundingBox())!;
+  expect(after.y).toBeCloseTo(before.y, 1);
+});
