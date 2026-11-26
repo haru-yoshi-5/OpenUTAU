@@ -488,3 +488,16 @@ test("ドラッグ中に点の表示を消しても、確定前のプレビュ�
   const after = (await point(page).boundingBox())!;
   expect(after.y).toBeCloseTo(before.y, 1);
 });
+
+test("時間順に並んでいないノートの点は、ドラッグしても編集にならない", async ({ page }) => {
+  await openUnsortedNote(page);
+  const box = (await point(page).boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 12, y - 24, { steps: 6 });
+  await page.mouse.up();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  await expect(page.getByText("ピッチ点が時間順に並んでいません")).toBeVisible();
+});

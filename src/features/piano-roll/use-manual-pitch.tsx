@@ -203,7 +203,8 @@ export function useManualPitch(
    * まだ確定していないドラッグ途中の位置を土台にしてしまうため）
    */
   const apply = (next: Pitch, label: string, mergeId?: string) => {
-    if (drag.current) return false;
+    // 時間順に並んでいないノートは、「時間順に並べ替える」以外の編集を受け付けない
+    if (drag.current || locked) return false;
     return record(label, { pitch: next }, { mergeId });
   };
   const changePoint = (index: number, point: PitchPoint, source = pitch): Pitch => ({
@@ -300,6 +301,9 @@ export function useManualPitch(
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.stopPropagation();
+          // disabled のボタンにも pointer イベントは届くため、ロック中はここで止める
+          // （ピアノロールにも伝えないので、押しても矩形選択などは始まらない）
+          if (locked) return;
           e.currentTarget.focus({ preventScroll: true });
           e.currentTarget.setPointerCapture(e.pointerId);
           setActive(i);
@@ -368,11 +372,12 @@ export function useManualPitch(
     );
   });
   // 描画範囲（鍵盤とルーラーを除いた部分）で切り抜き、点が鍵盤やルーラーに重ならないようにする。
-  // overflow: clip はスクロールコンテナを作らないため、範囲外の点にフォーカスしても表示がずれない
+  // overflow: clip と contain: paint はスクロールコンテナを作らないため、範囲外の点にフォーカスしても
+  // 表示がずれない（contain: paint は overflow: clip に未対応の Safari 15.4〜15.x 向け）
   const overlay = showPitch && (
     <div
       ref={overlayRef}
-      className="pointer-events-none absolute right-0 bottom-0 z-10 overflow-clip"
+      className="pointer-events-none absolute right-0 bottom-0 z-10 overflow-clip [contain:paint]"
       style={{ left: KEY_WIDTH, top: RULER_HEIGHT }}
     >
       {points}
@@ -413,7 +418,9 @@ export function useManualPitch(
             size="sm"
             variant="outline"
             className="mt-2"
-            onClick={() => apply(sortPitchPoints(target.pitch), "ピッチ点を時間順に並べ替え")}
+            onClick={() =>
+              record("ピッチ点を時間順に並べ替え", { pitch: sortPitchPoints(target.pitch) })
+            }
           >
             時間順に並べ替える
           </Button>
