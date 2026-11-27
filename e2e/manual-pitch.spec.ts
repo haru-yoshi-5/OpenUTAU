@@ -688,3 +688,20 @@ test("パネルのチェックボックスで Space を押しても、表示移�
   // Space はチェックボックスの切り替えに使われる
   await expect(snap).toBeChecked({ checked: !checked });
 });
+
+test("「元に戻す」を右クリックしても、確定前の入力はすぐに確定する", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowLeft");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  await length.fill("60");
+  const undo = page.getByRole("button", { name: "元に戻す", exact: true });
+  await undo.scrollIntoViewIfNeeded();
+  const box = (await undo.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down({ button: "right" });
+  // 右クリックでは「元に戻す」は実行されないので、待たずに確定する（クリックを待つ 1 秒より短い時間で確かめる）
+  await expect(undo).toHaveAttribute("title", /ビブラートを変更/, { timeout: 500 });
+  await page.mouse.up({ button: "right" });
+  await expect(length).toHaveValue("60");
+});

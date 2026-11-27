@@ -146,7 +146,7 @@ export function useManualPitch(
    * 長押し中の矢印キーの目印と、その長押しを始めた点の番号。同じ目印の移動は 1 つの操作にまとめる。
    * 押したまま別の点へフォーカスを移すとキーリピートしか届かないため、点の番号でも区別する
    */
-  const hold = useRef<{ id: string; index: number } | null>(null);
+  const hold = useRef<{ id: string; note: string | null; index: number } | null>(null);
   const cancel = () => {
     stopDrag(drag);
     setDraft(null);
@@ -163,6 +163,22 @@ export function useManualPitch(
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
   }, []);
+  const preview = draft && draft.edits === edits ? draft.pitch : null;
+  // パート全体のピッチの計算は重いため、プレビューが変わった時だけ計算し直す
+  // （スクロールなど関係のない再描画では使い回す）
+  const previewPitch = useMemo(
+    () =>
+      preview && note
+        ? renderPartPitch(
+            {
+              ...part,
+              notes: part.notes.map((n) => (n.index === note.index ? { ...n, pitch: preview } : n)),
+            },
+            axis,
+          )
+        : null,
+    [preview, note, part, axis],
+  );
   if (!note) {
     return {
       overlay: null,
@@ -180,7 +196,6 @@ export function useManualPitch(
   }
   const target = note;
   const key = noteKey(part.index, target.index);
-  const preview = draft && draft.edits === edits ? draft.pitch : null;
   // 読み込んだ点は OpenUtau と同じく保存順のまま扱うが、編集の記録時は x の昇順に並べ替えられる。
   // 時間順に並んでいないノートは、編集の前後で前のノートに接続される点が入れ替わってしまうため、
   // 点の編集を止め、先に並べ替え（曲線の形が変わる）を 1 つの編集として確かめてもらう
@@ -297,8 +312,8 @@ export function useManualPitch(
     const dy = (e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0) * step;
     const x = clampPointTime(pitch.data, index, p.x + dx);
     // 長押し（キーリピート）中の移動は、履歴を埋めないよう同じ長押しの最初の移動とまとめる
-    if (!e.repeat || hold.current?.index !== index) {
-      hold.current = { id: `hold-${++holdSeq}`, index };
+    if (!e.repeat || hold.current?.note !== noteId || hold.current.index !== index) {
+      hold.current = { id: `hold-${++holdSeq}`, note: noteId, index };
     }
     apply(
       changePoint(index, { ...p, x, y: index === snapIndex ? p.y : p.y + dy }),
@@ -563,15 +578,6 @@ export function useManualPitch(
       )}
     </section>
   );
-  const previewPitch = preview
-    ? renderPartPitch(
-        {
-          ...part,
-          notes: part.notes.map((n) => (n.index === target.index ? { ...n, pitch: preview } : n)),
-        },
-        axis,
-      )
-    : null;
   return { overlay, controls, previewPitch };
 }
 
@@ -639,7 +645,9 @@ function VibratoInput({
   });
   useEffect(() => {
     const onPointerDown = (e: globalThis.PointerEvent) => {
+      // 右クリック・中クリックではボタンが押されない（click が届かない）ため、保留しない
       if (
+        e.button === 0 &&
         pending.current !== null &&
         e.target instanceof Element &&
         e.target.closest("[data-history-action]:not(:disabled)")
