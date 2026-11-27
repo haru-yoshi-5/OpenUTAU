@@ -573,3 +573,70 @@ test("表示範囲の外へスクロールした点には、Tab で移れない"
   expect((await point(page).boundingBox())!.y).not.toBe(before.y);
   await expect(point(page)).toHaveAttribute("tabindex", "-1");
 });
+
+/** タッチのタップ：pointerup の後、別のタスクでクリックが届く */
+async function delayedTap(page: Page, name: string) {
+  const button = page.getByRole("button", { name, exact: true });
+  await button.scrollIntoViewIfNeeded();
+  const box = (await button.boundingBox())!;
+  const init = { bubbles: true, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 };
+  await button.dispatchEvent("pointerdown", { ...init, pointerType: "touch" });
+  await button.dispatchEvent("pointerup", { ...init, pointerType: "touch" });
+  await page.waitForTimeout(150);
+  await button.evaluate((el) => (el as HTMLButtonElement).click());
+}
+
+test("タッチで「やり直す」をタップしても、確定前の入力でやり直しの履歴を消さない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  const original = await length.inputValue();
+  await length.fill("60");
+  await delayedTap(page, "やり直す");
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await expect(length).toHaveValue(original);
+  await expect(page.getByRole("button", { name: "元に戻す", exact: true })).toHaveAttribute(
+    "title",
+    /ピッチ点を移動/,
+  );
+});
+
+test("タッチで「元に戻す」をタップすると、確定前の入力だけを取り消す", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  const original = await length.inputValue();
+  await length.fill("60");
+  await delayedTap(page, "元に戻す");
+  await expect(length).toHaveValue(original);
+  await expect(page.getByRole("button", { name: "元に戻す", exact: true })).toHaveAttribute(
+    "title",
+    /ピッチ点を移動/,
+  );
+  await expect(page.getByRole("button", { name: "やり直す", exact: true })).toBeDisabled();
+});
+
+test("Delete で点を消した後、表示範囲の外の点にはフォーカスを移さない", async ({ page }) => {
+  await openSelectedNote(page);
+  await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
+  // 先頭の点を表示範囲の外（左）へ出す
+  const first = page.getByRole("button", { name: "ピッチ点 1", exact: true });
+  await first.focus();
+  const rollBox = (await roll(page).boundingBox())!;
+  for (let i = 0; i < 200; i++) {
+    const box = (await first.boundingBox())!;
+    if (box.x + box.width < rollBox.x) break;
+    await page.keyboard.press("Shift+ArrowLeft");
+  }
+  await expect(first).toHaveAttribute("tabindex", "-1");
+  await point(page).focus();
+  await page.keyboard.press("Delete");
+  await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(2);
+  await expect(first).not.toBeFocused();
+  await expect(roll(page)).toBeFocused();
+});

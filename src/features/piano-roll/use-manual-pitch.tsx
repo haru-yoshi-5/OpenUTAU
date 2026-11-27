@@ -116,7 +116,9 @@ export function useManualPitch(
     focusAfter.current = null;
     const container = overlayRef.current;
     const button = container?.querySelectorAll<HTMLButtonElement>("button")[index];
-    const target = button ?? container?.closest<HTMLElement>("section");
+    // 描画範囲の外の点（Tab で移れない点）には移さず、ピアノロールへ戻す
+    const target =
+      button && button.tabIndex !== -1 ? button : container?.closest<HTMLElement>("section");
     target?.focus({ preventScroll: true });
   });
   // 選んでいるノートが変わったら、選択中の点とプレビューを描画時にリセットする
@@ -556,6 +558,9 @@ export function useManualPitch(
   return { overlay, controls, previewPitch };
 }
 
+/** 「元に戻す」「やり直す」の上で離してから、クリックが届くのを待つ時間 */
+const CLICK_WAIT_MS = 1000;
+
 const isNumberText = (text: string | null): text is string =>
   text !== null && text.trim() !== "" && Number.isFinite(Number(text));
 
@@ -589,11 +594,14 @@ function VibratoInput({
    * 確定前の入力だけを取り消す（テキストエディタと同じく、まず直前の入力を戻す）。
    * 「やり直す」が実際に行われたら入力を捨て、クリックをやめた（ボタンの外で離した）場合は
    * 通常どおり確定する。pointerdown は blur より先に起きるため、ボタンにフォーカスが移らない
-   * ブラウザ（Safari など）でも働く
+   * ブラウザ（Safari など）でも働く。値は押したボタン（押していなければ null）
    */
-  const awaitingHistory = useRef(false);
+  const awaitingHistory = useRef<Element | null>(null);
+  /** ボタンの上で離した後、クリックが届かなかった場合に確定するためのタイマー */
+  const clickTimer = useRef(0);
   const discard = () => {
-    awaitingHistory.current = false;
+    awaitingHistory.current = null;
+    clearTimeout(clickTimer.current);
     pending.current = null;
     setDraft(null);
     setInvalid(false);
@@ -619,24 +627,40 @@ function VibratoInput({
         e.target instanceof Element &&
         e.target.closest("[data-history-action]:not(:disabled)")
       ) {
-        awaitingHistory.current = true;
+        awaitingHistory.current = e.target.closest("[data-history-action]");
       }
     };
-    const onPointerUp = () => {
-      if (!awaitingHistory.current) return;
-      // クリック（取り消し・やり直しの実行）は pointerup と同じタスクで起きるため、その後で確かめる
-      setTimeout(() => {
-        if (!awaitingHistory.current) return;
-        awaitingHistory.current = false;
-        flushRef.current(false);
-      }, 0);
+    const commitNow = () => {
+      awaitingHistory.current = null;
+      clearTimeout(clickTimer.current);
+      flushRef.current(false);
+    };
+    const onPointerUp = (e: globalThis.PointerEvent) => {
+      const button = awaitingHistory.current;
+      if (!button) return;
+      // ボタンの外で離した（押すのをやめた）なら、すぐに確定する。タッチでは pointerup の target が
+      // 押した要素のままになるため、離した位置の要素で確かめる
+      const released = document.elementFromPoint(e.clientX, e.clientY);
+      if (!released || !button.contains(released)) {
+        commitNow();
+        return;
+      }
+      // ボタンの上で離したら、クリック（取り消し・やり直しの実行）を待つ。タッチではクリックが
+      // pointerup より後のタスクで届くことがあるため、すぐには確定しない。届かなければ確定する
+      clearTimeout(clickTimer.current);
+      clickTimer.current = window.setTimeout(() => {
+        if (awaitingHistory.current) commitNow();
+      }, CLICK_WAIT_MS);
+    };
+    const onPointerCancel = () => {
+      if (awaitingHistory.current) commitNow();
     };
     // 「元に戻す」のクリックは、ボタンに届く前（document の capture 段階）で止めて、入力だけを取り消す
     const onClick = (e: MouseEvent) => {
       if (
-        awaitingHistory.current &&
+        awaitingHistory.current?.matches('[data-history-action="undo"]:not(:disabled)') &&
         e.target instanceof Element &&
-        e.target.closest('[data-history-action="undo"]:not(:disabled)')
+        awaitingHistory.current.contains(e.target)
       ) {
         e.stopPropagation();
         e.preventDefault();
@@ -658,15 +682,16 @@ function VibratoInput({
     window.addEventListener("beforeunload", onBeforeUnload);
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("pointerup", onPointerUp, true);
-    document.addEventListener("pointercancel", onPointerUp, true);
+    document.addEventListener("pointercancel", onPointerCancel, true);
     document.addEventListener("click", onClick, true);
     return () => {
       unsubscribe();
       window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("pointerup", onPointerUp, true);
-      document.removeEventListener("pointercancel", onPointerUp, true);
+      document.removeEventListener("pointercancel", onPointerCancel, true);
       document.removeEventListener("click", onClick, true);
+      clearTimeout(clickTimer.current);
     };
   }, []);
   const errorId = useId();

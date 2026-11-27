@@ -101,22 +101,24 @@ export const useEditStore = create<EditState>()((set, get) => ({
     if (applied.length === 0) return;
     const mergeId = options?.mergeId;
     const last = undoStack.at(-1);
-    if (
-      mergeId !== undefined &&
-      last?.mergeId === mergeId &&
-      last.label === label &&
-      last.changes.length === applied.length &&
-      applied.every((c, i) => c.key === last.changes[i].key)
-    ) {
-      // 直前の操作の「変更前」を引き継ぎ、変更後だけを差し替える
-      const merged = applied
-        .map((c, i) => ({ ...c, before: last.changes[i].before }))
-        .filter((c) => isDeepStrictEqual(c.before, c.after) !== null);
+    if (mergeId !== undefined && last?.mergeId === mergeId && last.label === label) {
+      // 同じ長押しの操作は、ノートの組み合わせが途中で変わっても 1 つにまとめる。
+      // 直前の操作の「変更前」を引き継ぎ、変更後だけを差し替える（今回変えないノートはそのまま残す）
+      const afterByKey = new Map(applied.map((c) => [c.key, c.after]));
+      const lastKeys = new Set(last.changes.map((c) => c.key));
+      const merged = [
+        ...last.changes.map((c) =>
+          afterByKey.has(c.key) ? { ...c, after: afterByKey.get(c.key) } : c,
+        ),
+        ...applied.filter((c) => !lastKeys.has(c.key)),
+      ];
+      // 全部のノートが元の値に戻った場合だけ、操作ごと履歴から消す
+      const unchanged = merged.every((c) => isDeepStrictEqual(c.before, c.after) === null);
       set({
         edits: withChanges(edits, applied, "after"),
         undoStack: [
           ...undoStack.slice(0, -1),
-          ...(merged.length ? [{ label, changes: merged, mergeId }] : []),
+          ...(unchanged ? [] : [{ label, changes: merged, mergeId }]),
         ],
         redoStack: [],
       });
