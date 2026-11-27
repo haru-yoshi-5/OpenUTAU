@@ -9,9 +9,9 @@ import type { PitchPoint, RawNote, Vibrato } from "./types";
 /** OpenUtau でビブラートをオンにしたときの長さ（NotePresets.DefaultVibrato.VibratoLength） */
 export const DEFAULT_VIBRATO_LENGTH = 75;
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-function invalidEdit(message: string, detail?: string): never {
+export function invalidEdit(message: string, detail?: string): never {
   throw new UstxError("invalid-edit", message, detail);
 }
 
@@ -25,7 +25,8 @@ export function normalizePitch(pitch: RawNote["pitch"]): RawNote["pitch"] {
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
       invalidEdit("ピッチ点の位置・高さに数値以外の値が含まれています。");
     }
-    return { x, y, shape };
+    // 丸めで生じる -0 は元の 0 と別の値とみなされ、元の位置に戻しても編集が残るため 0 にそろえる
+    return { x: x + 0, y: y + 0, shape };
   });
   if (pitch.snap_first && data.length === 0) {
     invalidEdit("ピッチ点をすべて削除することはできません（OpenUtau で開けなくなるため）。");

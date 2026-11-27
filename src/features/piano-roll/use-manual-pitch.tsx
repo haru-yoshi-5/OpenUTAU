@@ -12,7 +12,7 @@ import { Button } from "../../components/ui/button";
 import { UstxError } from "../../lib/ustx/errors";
 import type { VoicePart } from "../../lib/ustx/load";
 import { noteKey } from "../../lib/ustx/edits";
-import { sortPitchPoints, sortPoints } from "../../lib/ustx/normalize";
+import { clamp, sortPitchPoints, sortPoints } from "../../lib/ustx/normalize";
 import { adjustedTone, effectivePitchPoints, renderPartPitch } from "../../lib/ustx/pitch";
 import { TimeAxis } from "../../lib/ustx/time-axis";
 import type { PitchPoint, RawNote, Tempo, Vibrato } from "../../lib/ustx/types";
@@ -28,6 +28,7 @@ import {
   tickToX,
   type Camera,
 } from "./geometry";
+import { xToTick } from "./hit-test";
 import { useRollTheme } from "./theme";
 
 type Pitch = RawNote["pitch"];
@@ -41,8 +42,6 @@ interface Drag {
   note: number;
   x: number;
   y: number;
-  /** 自動接続で高さが決まる点の番号（無ければ -1）。この点は高さを変えない */
-  snapIndex: number;
   /** 押した位置から点の中心までのずれ。ドラッグ開始時に点がカーソルへ飛ばないようにする */
   offsetX: number;
   offsetY: number;
@@ -77,7 +76,16 @@ const SHAPE_LABELS: Record<PitchPoint["shape"], string> = {
   sp: "スプライン (sp)",
 };
 
-const clamp100 = (v: number) => Math.min(100, Math.max(0, v));
+const VIBRATO_FIELDS: [keyof Vibrato, string][] = [
+  ["length", "長さ (%)"],
+  ["period", "周期 (ms)"],
+  ["depth", "深さ (cent)"],
+  ["in", "フェードイン (%)"],
+  ["out", "フェードアウト (%)"],
+  ["shift", "位相 (%)"],
+  ["drift", "ドリフト"],
+  ["vol_link", "音量連動"],
+];
 
 export function useManualPitch(
   part: VoicePart,
@@ -120,21 +128,18 @@ export function useManualPitch(
     setDraft(null);
     setError(null);
   }
-  // ドラッグ中に点のボタンが消えた場合（Ctrl+A など）も、ドラッグ状態を残さない
-  useEffect(() => {
-    stopDrag(drag);
-  }, [noteId]);
   // 表示の切り替えや表示移動モードで点のボタンが消えると、pointerup が届かずドラッグが残るため、
-  // そのときもドラッグとプレビューを片付ける（プレビューは描画時、ドラッグは effect で）
+  // そのときもプレビューを描画時に片付ける
   const dragContext = `${showPitch}:${panMode}`;
   const [contextShown, setContextShown] = useState(dragContext);
   if (contextShown !== dragContext) {
     setContextShown(dragContext);
     setDraft(null);
   }
+  // ノートが変わった時（Ctrl+A など）や上の切り替えで点のボタンが消えても、ドラッグ状態を残さない
   useEffect(() => {
     stopDrag(drag);
-  }, [showPitch, panMode]);
+  }, [noteId, showPitch, panMode]);
   /** 長押し中の矢印キーの目印。同じ目印の移動は 1 つの操作にまとめる */
   const holdId = useRef("");
   const cancel = () => {
@@ -226,18 +231,19 @@ export function useManualPitch(
     const origin = drawingOrigin(g.section);
     const x = clientX + g.offsetX - origin.left - KEY_WIDTH;
     const y = clientY + g.offsetY - origin.top - RULER_HEIGHT;
-    const tick = x / cam.pxPerTick + cam.scrollTick;
+    const tick = xToTick(x, cam);
     const ms = pointTime(axis, part.position, target.position, tick);
-    // -0 は元の値（0）と別の値とみなされ、元の位置に戻しても編集が残るため 0 にそろえる
-    const relativeY =
-      Math.round(((centsToY(adjustedTone(target) * 100, cam) - y) / ROW_HEIGHT) * 10) || 0;
+    const relativeY = Math.round(
+      ((centsToY(adjustedTone(target) * 100, cam) - y) / ROW_HEIGHT) * 10,
+    );
     const old = g.pitch.data[g.index];
     return changePoint(
       g.index,
       {
         ...old,
         x: clampPointTime(g.pitch.data, g.index, ms),
-        y: g.index === g.snapIndex ? old.y : relativeY,
+        // 自動接続で高さが決まる点（並べ替え後は先頭）は高さを変えない
+        y: g.index === 0 && g.pitch.snap_first ? old.y : relativeY,
       },
       g.pitch,
     );
@@ -327,7 +333,6 @@ export function useManualPitch(
             id: e.pointerId,
             index: i,
             pitch,
-            snapIndex,
             edits: useEditStore.getState().edits,
             part: part.index,
             note: target.index,
@@ -398,21 +403,11 @@ export function useManualPitch(
       {points}
     </div>
   );
-  const vibratoFields: [keyof Vibrato, string][] = [
-    ["length", "長さ (%)"],
-    ["period", "周期 (ms)"],
-    ["depth", "深さ (cent)"],
-    ["in", "フェードイン (%)"],
-    ["out", "フェードアウト (%)"],
-    ["shift", "位相 (%)"],
-    ["drift", "ドリフト"],
-    ["vol_link", "音量連動"],
-  ];
   const commitVibrato = (field: keyof Vibrato, value: number, quiet: boolean) => {
     const vibrato = { ...target.vibrato, [field]: value };
     // フェードインとフェードアウトは合計 100% まで。後から入力した方を優先し、もう片方を削る
-    if (field === "in") vibrato.out = Math.min(vibrato.out, 100 - clamp100(value));
-    if (field === "out") vibrato.in = Math.min(vibrato.in, 100 - clamp100(value));
+    if (field === "in") vibrato.out = Math.min(vibrato.out, 100 - clamp(value, 0, 100));
+    if (field === "out") vibrato.in = Math.min(vibrato.in, 100 - clamp(value, 0, 100));
     record("ビブラートを変更", { vibrato }, { quiet });
   };
   const controls = (
@@ -532,7 +527,7 @@ export function useManualPitch(
       <fieldset>
         <legend>ビブラート</legend>
         <div className="flex flex-wrap gap-2">
-          {vibratoFields.map(([field, label]) => (
+          {VIBRATO_FIELDS.map(([field, label]) => (
             <VibratoInput
               key={`${part.index}:${target.index}:${field}`}
               label={label}

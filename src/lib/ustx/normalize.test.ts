@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { sortPitchPoints, sortPoints } from "./normalize";
+import { normalizePitch, sortPitchPoints, sortPoints } from "./normalize";
 
 describe("ピッチ点の並べ替え", () => {
   const pitch = {
@@ -21,5 +21,13 @@ describe("ピッチ点の並べ替え", () => {
     const sorted = sortPitchPoints(pitch);
     expect(sortPitchPoints(sorted)).toBe(sorted);
     expect(sortPoints(sorted.data)).toBe(sorted.data);
+  });
+});
+
+describe("ピッチ点の正規化", () => {
+  it("丸めで生じた -0 は 0 にそろえる（元の 0 と同じ値とみなすため）", () => {
+    const { data } = normalizePitch({ data: [{ x: -0, y: -0, shape: "io" }], snap_first: false });
+    expect(Object.is(data[0].x, 0)).toBe(true);
+    expect(Object.is(data[0].y, 0)).toBe(true);
   });
 });

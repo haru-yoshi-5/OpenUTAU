@@ -223,9 +223,31 @@ describe("pruneEdit", () => {
       pitch: { snap_first: true, data: [...original.pitch.data].reverse() },
     };
     expect(pruneEdit(unsorted, { pitch: original.pitch })).toEqual({ pitch: original.pitch });
-    expect(pruneEdit(unsorted, { pitch: unsorted.pitch })).toEqual({
-      pitch: original.pitch,
+  });
+
+  it("元データとまったく同じピッチは、昇順でなくても並べ替えた差分を作らない", () => {
+    const unsorted = {
+      ...original,
+      pitch: { snap_first: true, data: [...original.pitch.data].reverse() },
+    };
+    expect(pruneEdit(unsorted, { pitch: unsorted.pitch })).toBeUndefined();
+    const changed = vibrato({ length: 60 });
+    expect(pruneEdit(unsorted, { pitch: unsorted.pitch, vibrato: changed })).toEqual({
+      vibrato: changed,
     });
+  });
+
+  it("元データのピッチ点に -0 があっても、同じ位置に戻した点は差分にしない", () => {
+    const withNegativeZero = {
+      ...original,
+      pitch: { ...original.pitch, data: original.pitch.data.map((p) => ({ ...p, y: p.y || -0 })) },
+    };
+    expect(withNegativeZero.pitch.data.some((p) => Object.is(p.y, -0))).toBe(true);
+    const moved = original.pitch.data.map((p) => ({ ...p, y: p.y + 10 }));
+    expect(
+      pruneEdit(withNegativeZero, { pitch: { ...original.pitch, data: moved } }),
+    ).toBeDefined();
+    expect(pruneEdit(withNegativeZero, { pitch: original.pitch })).toBeUndefined();
   });
 
   it("元データのビブラートが範囲外でも、読み込み時に丸めた値と同じなら差分にしない", () => {
