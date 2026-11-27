@@ -264,7 +264,13 @@ export function useManualPitch(
     return false;
   };
   const pointKey = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    // Ctrl+Z などのショートカットや Esc（選択の解除）は、ピアノロールとツールバーに任せる
+    // Esc（選択の解除）と Ctrl / ⌘ + A（全選択）はピアノロールに任せる。ノートが 1 つだけ選ばれた
+    // 状態でなくなり点のボタンが消えるため、選択が変わる前にピアノロールへフォーカスを移す
+    if (e.key === "Escape" || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a")) {
+      e.currentTarget.closest("section")?.focus({ preventScroll: true });
+      return;
+    }
+    // Ctrl+Z などのショートカットは、ピアノロールとツールバーに任せる
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (SELECT_KEYS.includes(e.key)) {
       setActive(index);

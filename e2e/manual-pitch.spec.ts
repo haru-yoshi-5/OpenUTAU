@@ -143,6 +143,8 @@ test("点にフォーカスがあっても、Ctrl+Z で戻し Esc で選択を�
   await page.keyboard.press("Escape");
   await expect.poll(() => selectedCount(page)).toBe(0);
   await expect(point(page)).toBeHidden();
+  // 点のボタンが消えても、フォーカスはピアノロールに残る
+  await expect(roll(page)).toBeFocused();
 });
 
 test("ビブラートの入力は、確定前に別のノートを選んでも失われない", async ({ page }) => {
@@ -163,8 +165,8 @@ test("ドラッグ中に選択が変わってもドラッグ状態を残さず�
   await page.keyboard.press("Control+a");
   await expect.poll(() => selectedCount(page)).toBe(12);
   await page.mouse.up();
-  // 点のボタンが消えてフォーカスが外れるため、ピアノロールに戻してから Esc を押す
-  await roll(page).focus();
+  // 点のボタンが消えても、フォーカスはピアノロールに移っているので、そのまま Esc を押せる
+  await expect(roll(page)).toBeFocused();
   await page.keyboard.press("Escape");
   await expect.poll(() => selectedCount(page)).toBe(0);
   await expect(editStatus(page)).toHaveText("編集はありません");
@@ -672,4 +674,17 @@ test("長押しのまま別の点へフォーカスを移すと、前の長押�
   await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
   await page.getByRole("button", { name: "元に戻す", exact: true }).click();
   await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("パネルのチェックボックスで Space を押しても、表示移動モードにならない", async ({ page }) => {
+  await openSelectedNote(page);
+  const snap = page.getByRole("checkbox", { name: "先頭点を前のノートに接続" });
+  const checked = await snap.isChecked();
+  await snap.focus();
+  await page.keyboard.down(" ");
+  // 表示移動モードの間は、点がポインター操作を受け付けない
+  await expect(point(page)).toHaveCSS("pointer-events", "auto");
+  await page.keyboard.up(" ");
+  // Space はチェックボックスの切り替えに使われる
+  await expect(snap).toBeChecked({ checked: !checked });
 });

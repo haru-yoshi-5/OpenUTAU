@@ -66,6 +66,12 @@ const isTextInput = (target: EventTarget | null) =>
     target instanceof HTMLTextAreaElement ||
     (target instanceof HTMLInputElement && !["checkbox", "radio", "button"].includes(target.type)));
 
+/** ピアノロールの外にある、Space で操作するフォーム部品（ボタン・チェックボックス・選択欄など） */
+const isOutsideControl = (target: EventTarget | null, roll: HTMLElement | null) =>
+  target instanceof Element &&
+  target.closest("button, select, input, summary, [role='button']") !== null &&
+  !roll?.contains(target);
+
 export function useRollGestures({ containerRef, part, bars, maxDuration, cam, scrollBy }: Options) {
   const gesture = useRef<Gesture | null>(null);
   const [marquee, setMarquee] = useState<Marquee | null>(null);
@@ -76,8 +82,14 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
   // Space を押している間は、左ドラッグを表示の移動にする
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== " " || isTextInput(e.target)) return;
-      setSpaceHeld(e.type === "keydown");
+      if (e.key !== " ") return;
+      if (e.type === "keyup") {
+        setSpaceHeld(false);
+        return;
+      }
+      // 文字の入力欄と、ピアノロールの外のボタン・チェックボックス・選択欄では、Space はその部品の操作に使う
+      if (isTextInput(e.target) || isOutsideControl(e.target, containerRef.current)) return;
+      setSpaceHeld(true);
     };
     const onBlur = () => setSpaceHeld(false);
     window.addEventListener("keydown", onKey);
@@ -88,7 +100,7 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
       window.removeEventListener("keyup", onKey);
       window.removeEventListener("blur", onBlur);
     };
-  }, []);
+  }, [containerRef]);
 
   /** 描画領域（鍵盤・ルーラーを除く）の左上を原点とした座標 */
   const localPoint = (e: PointerEvent) => {
