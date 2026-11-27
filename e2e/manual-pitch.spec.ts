@@ -523,3 +523,53 @@ test("確定前のビブラート入力があるときにページを閉じよ�
   expect(dialog.type()).toBe("beforeunload");
   await dialog.dismiss();
 });
+
+test("確定前のビブラート入力があるときの「元に戻す」は、入力だけを取り消す", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  const original = await length.inputValue();
+  await length.fill("60");
+  const undo = page.getByRole("button", { name: "元に戻す", exact: true });
+  await undo.click();
+  // 記録済みの点の移動は残り、入力だけが元の値に戻る
+  await expect(length).toHaveValue(original);
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await expect(undo).toHaveAttribute("title", /ピッチ点を移動/);
+  await expect(page.getByRole("button", { name: "やり直す", exact: true })).toBeDisabled();
+  // もう一度押すと、記録済みの編集を戻す
+  await undo.click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("ビブラートに数値以外を入れて確定すると、元の値に戻して理由を表示する", async ({ page }) => {
+  await openSelectedNote(page);
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  const original = await length.inputValue();
+  await length.fill("");
+  await length.press("Tab");
+  await expect(length).toHaveValue(original);
+  await expect(page.getByRole("alert").filter({ hasText: "数値を入力してください" })).toBeVisible();
+  await expect(length).toHaveAttribute("aria-invalid", "true");
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  // 入力し直すと表示は消える
+  await length.fill("60");
+  await expect(page.getByText("数値を入力してください")).toBeHidden();
+});
+
+test("表示範囲の外へスクロールした点には、Tab で移れない", async ({ page }) => {
+  await openSelectedNote(page);
+  await expect(point(page)).not.toHaveAttribute("tabindex", "-1");
+  const box = (await roll(page).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // 縦にスクロールして、選んでいるノートの点を描画範囲の外へ出す
+  const before = (await point(page).boundingBox())!;
+  for (const dy of [-3000, 3000]) {
+    await page.mouse.wheel(0, dy);
+    const after = await point(page).boundingBox();
+    if (after && (after.y + after.height < box.y || after.y > box.y + box.height)) break;
+  }
+  expect((await point(page).boundingBox())!.y).not.toBe(before.y);
+  await expect(point(page)).toHaveAttribute("tabindex", "-1");
+});

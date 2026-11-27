@@ -8,8 +8,9 @@ export function pointTime(
   notePosition: number,
   tick: number,
 ): number {
-  return Math.round(
-    axis.tickToMs(partPosition + tick) - axis.tickToMs(partPosition + notePosition),
+  // -0 は 0 と別の値とみなされ、元の位置に戻しても編集が残るため 0 にそろえる
+  return (
+    Math.round(axis.tickToMs(partPosition + tick) - axis.tickToMs(partPosition + notePosition)) || 0
   );
 }
 

@@ -12,6 +12,9 @@ describe("手動ピッチ点の座標", () => {
     expect(pointTime(axis, 0, 240, 720)).toBe(750);
     expect(pointTime(axis, 240, 0, 480)).toBe(750);
   });
+  it("ノート先頭の少し手前（-0.5 ms 未満の差）は -0 ではなく 0 を返す", () => {
+    expect(Object.is(pointTime(axis, 0, 480, 479.9), 0)).toBe(true);
+  });
   it("前後の点を追い越さず、端の点は外側へ移動できる", () => {
     const points = [-50, 0, 100].map((x) => ({ x, y: 0, shape: "io" as const }));
     expect(clampPointTime(points, 1, -100)).toBe(-50);

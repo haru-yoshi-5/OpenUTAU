@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type RefObject,
+} from "react";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { UstxError } from "../../lib/ustx/errors";
@@ -79,6 +87,8 @@ export function useManualPitch(
   panMode: boolean,
   /** 「ピッチカーブを表示」。オフのときは点を出さない（見えない曲線を動かさないため） */
   showPitch: boolean,
+  /** 描画範囲（鍵盤とルーラーを除く）の大きさ。範囲外の点は Tab で移れないようにする */
+  viewport: { width: number; height: number },
 ) {
   const note = selected.size === 1 ? part.notes.find((n) => selected.has(n.index)) : undefined;
   const axis = useMemo(() => new TimeAxis(tempos), [tempos]);
@@ -218,9 +228,9 @@ export function useManualPitch(
     const y = clientY + g.offsetY - origin.top - RULER_HEIGHT;
     const tick = x / cam.pxPerTick + cam.scrollTick;
     const ms = pointTime(axis, part.position, target.position, tick);
-    const relativeY = Math.round(
-      ((centsToY(adjustedTone(target) * 100, cam) - y) / ROW_HEIGHT) * 10,
-    );
+    // -0 は元の値（0）と別の値とみなされ、元の位置に戻しても編集が残るため 0 にそろえる
+    const relativeY =
+      Math.round(((centsToY(adjustedTone(target) * 100, cam) - y) / ROW_HEIGHT) * 10) || 0;
     const old = g.pitch.data[g.index];
     return changePoint(
       g.index,
@@ -281,6 +291,8 @@ export function useManualPitch(
     const x = tickToX(tick, cam);
     const y = centsToY(adjustedTone(target) * 100 + p.y * 10, cam);
     const isActive = activeIndex === i;
+    // 描画範囲の外の点は Tab で移れないようにする（見えないまま動かしたり消したりしないため）
+    const visible = x >= 0 && x <= viewport.width && y >= 0 && y <= viewport.height;
     return (
       <button
         key={i}
@@ -288,6 +300,7 @@ export function useManualPitch(
         aria-label={`ピッチ点 ${i + 1}`}
         aria-pressed={isActive}
         disabled={locked}
+        tabIndex={visible ? undefined : -1}
         className="absolute size-4 rounded-full border-2 focus-visible:outline-2 focus-visible:outline-offset-1"
         style={{
           left: x - 8,
@@ -562,6 +575,7 @@ function VibratoInput({
   onCommit: (value: number, quiet: boolean) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const [invalid, setInvalid] = useState(false);
   // 確定前の入力。Enter・Tab で確定する前に入力欄が消えた場合（別のノートを選んだ時など）も確定させる
   const pending = useRef<string | null>(null);
   const commitRef = useRef(onCommit);
@@ -576,20 +590,32 @@ function VibratoInput({
   );
   /**
    * 「元に戻す」「やり直す」を押している間は、確定を保留する。確定すると新しい編集になり、
-   * やり直しの履歴が消えるため。取り消し・やり直しが実際に行われたら入力を捨て、
-   * クリックをやめた（ボタンの外で離した）場合は通常どおり確定する。
-   * pointerdown は blur より先に起きるため、ボタンにフォーカスが移らないブラウザ（Safari など）でも働く
+   * やり直しの履歴が消えるため。「元に戻す」を押した場合は、記録済みの編集を戻さずに
+   * 確定前の入力だけを取り消す（テキストエディタと同じく、まず直前の入力を戻す）。
+   * 「やり直す」が実際に行われたら入力を捨て、クリックをやめた（ボタンの外で離した）場合は
+   * 通常どおり確定する。pointerdown は blur より先に起きるため、ボタンにフォーカスが移らない
+   * ブラウザ（Safari など）でも働く
    */
   const awaitingHistory = useRef(false);
+  const discard = () => {
+    awaitingHistory.current = false;
+    pending.current = null;
+    setDraft(null);
+    setInvalid(false);
+  };
   const flush = (quiet: boolean) => {
     const text = pending.current;
     pending.current = null;
     if (isNumberText(text)) commitRef.current(Number(text), quiet);
+    // 数値でない入力（空欄など）は元の値に戻し、理由を表示する
+    setInvalid(text !== null && !isNumberText(text));
     setDraft(null);
   };
   const flushRef = useRef(flush);
+  const discardRef = useRef(discard);
   useEffect(() => {
     flushRef.current = flush;
+    discardRef.current = discard;
   });
   useEffect(() => {
     const onPointerDown = (e: globalThis.PointerEvent) => {
@@ -610,12 +636,22 @@ function VibratoInput({
         flushRef.current(false);
       }, 0);
     };
+    // 「元に戻す」のクリックは、ボタンに届く前（document の capture 段階）で止めて、入力だけを取り消す
+    const onClick = (e: MouseEvent) => {
+      if (
+        awaitingHistory.current &&
+        e.target instanceof Element &&
+        e.target.closest('[data-history-action="undo"]:not(:disabled)')
+      ) {
+        e.stopPropagation();
+        e.preventDefault();
+        discardRef.current();
+      }
+    };
     const unsubscribe = useEditStore.subscribe((state, prev) => {
       if (!awaitingHistory.current) return;
       if (state.undoStack === prev.undoStack && state.redoStack === prev.redoStack) return;
-      awaitingHistory.current = false;
-      pending.current = null;
-      setDraft(null);
+      discardRef.current();
     });
     // 確定前の入力は記録済みの編集に含まれず、ページを閉じる前の確認の対象にならないため、ここで確認を出す
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -628,19 +664,24 @@ function VibratoInput({
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("pointerup", onPointerUp, true);
     document.addEventListener("pointercancel", onPointerUp, true);
+    document.addEventListener("click", onClick, true);
     return () => {
       unsubscribe();
       window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("pointerup", onPointerUp, true);
       document.removeEventListener("pointercancel", onPointerUp, true);
+      document.removeEventListener("click", onClick, true);
     };
   }, []);
+  const errorId = useId();
   return (
     <label>
       {label}{" "}
       <input
         aria-label={`ビブラート ${label}`}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid ? errorId : undefined}
         className="h-8 w-20 rounded-md border bg-card px-1"
         type="number"
         step="any"
@@ -648,6 +689,7 @@ function VibratoInput({
         onChange={(e) => {
           pending.current = e.target.value;
           setDraft(e.target.value);
+          setInvalid(false);
         }}
         onBlur={() => {
           // 履歴ボタンを押している間は、離すまで確定を保留する
@@ -655,12 +697,16 @@ function VibratoInput({
         }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
-            pending.current = null;
-            setDraft(null);
+            discard();
             e.currentTarget.blur();
           } else if (e.key === "Enter") e.currentTarget.blur();
         }}
       />
+      {invalid && (
+        <span id={errorId} role="alert" className="ml-1 text-xs text-destructive">
+          数値を入力してください（元の値に戻しました）
+        </span>
+      )}
     </label>
   );
 }
