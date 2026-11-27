@@ -640,3 +640,36 @@ test("Delete で点を消した後、表示範囲の外の点にはフォーカ�
   await expect(first).not.toBeFocused();
   await expect(roll(page)).toBeFocused();
 });
+
+test("「ピッチカーブを表示」がオフの間は、パネルからもピッチ点を編集できない", async ({ page }) => {
+  await openSelectedNote(page);
+  await page.getByRole("checkbox", { name: "ピッチカーブを表示" }).uncheck();
+  await expect(page.getByRole("button", { name: "ピッチ点を追加", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "ピッチ点を削除", exact: true })).toBeDisabled();
+  await expect(page.getByRole("combobox", { name: "ピッチ点の補間" })).toBeDisabled();
+  await expect(page.getByRole("checkbox", { name: "先頭点を前のノートに接続" })).toBeDisabled();
+  // ビブラートは曲線の表示と関係なく編集できる
+  await expect(
+    page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true }),
+  ).toBeEnabled();
+});
+
+test("長押しのまま別の点へフォーカスを移すと、前の長押しとは別の操作になる", async ({ page }) => {
+  await openSelectedNote(page);
+  const first = page.getByRole("button", { name: "ピッチ点 1", exact: true });
+  await first.focus();
+  await page.keyboard.press("ArrowLeft");
+  // 先頭の点は自動接続中で高さを変えないため、横に動かす
+  // 押したまま点 2 へ移った状態：点 2 にはキーリピートだけが届く
+  await point(page).focus();
+  await point(page).evaluate((el) =>
+    el.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowLeft", repeat: true, bubbles: true }),
+    ),
+  );
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  // 点 2 の移動だけが戻り、点 1 の移動は残る
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});

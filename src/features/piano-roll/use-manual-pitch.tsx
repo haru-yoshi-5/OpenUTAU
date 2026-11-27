@@ -142,8 +142,11 @@ export function useManualPitch(
   useEffect(() => {
     stopDrag(drag);
   }, [noteId, showPitch, panMode]);
-  /** 長押し中の矢印キーの目印。同じ目印の移動は 1 つの操作にまとめる */
-  const holdId = useRef("");
+  /**
+   * 長押し中の矢印キーの目印と、その長押しを始めた点の番号。同じ目印の移動は 1 つの操作にまとめる。
+   * 押したまま別の点へフォーカスを移すとキーリピートしか届かないため、点の番号でも区別する
+   */
+  const hold = useRef<{ id: string; index: number } | null>(null);
   const cancel = () => {
     stopDrag(drag);
     setDraft(null);
@@ -193,6 +196,8 @@ export function useManualPitch(
   const displayed = sortPoints(
     effectivePitchPoints({ ...target, pitch: preview ?? target.pitch }, previous),
   );
+  // パネルのピッチ点の操作も、曲線が見えている（「ピッチカーブを表示」がオン）ときだけ使える
+  const editable = !locked && showPitch;
   const startMs = axis.tickToMs(part.position + target.position);
   /**
    * 編集を記録する。拒否されたらパネルにエラーを表示して false を返す。
@@ -286,11 +291,13 @@ export function useManualPitch(
     const dy = (e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0) * step;
     const x = clampPointTime(pitch.data, index, p.x + dx);
     // 長押し（キーリピート）中の移動は、履歴を埋めないよう同じ長押しの最初の移動とまとめる
-    if (!e.repeat) holdId.current = `hold-${++holdSeq}`;
+    if (!e.repeat || hold.current?.index !== index) {
+      hold.current = { id: `hold-${++holdSeq}`, index };
+    }
     apply(
       changePoint(index, { ...p, x, y: index === snapIndex ? p.y : p.y + dy }),
       "ピッチ点を移動",
-      holdId.current,
+      hold.current.id,
     );
   };
   const points = displayed.map((p, i) => {
@@ -320,6 +327,9 @@ export function useManualPitch(
           pointerEvents: panMode ? "none" : "auto",
         }}
         onKeyDown={(e) => pointKey(e, i)}
+        onBlur={() => {
+          hold.current = null;
+        }}
         onClick={() => setActive(i)}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
@@ -418,7 +428,7 @@ export function useManualPitch(
         手動ピッチ編集：点の位置はノート先頭からのミリ秒、音高は 10 cent
         単位です。点をドラッグ、または矢印キー（横 5 ms・縦 10 cent。Shift で 10
         倍）で移動できます。
-        {!showPitch && "「ピッチカーブを表示」をオンにすると、ピッチ点が表示されます。"}
+        {!showPitch && "「ピッチカーブを表示」をオンにすると、ピッチ点を表示・編集できます。"}
       </p>
       {locked && (
         <Alert tone="warning" title="ピッチ点が時間順に並んでいません">
@@ -430,6 +440,7 @@ export function useManualPitch(
             size="sm"
             variant="outline"
             className="mt-2"
+            disabled={!showPitch}
             onClick={() =>
               record("ピッチ点を時間順に並べ替え", { pitch: sortPitchPoints(target.pitch) })
             }
@@ -442,7 +453,7 @@ export function useManualPitch(
         <Button
           size="sm"
           variant="outline"
-          disabled={locked}
+          disabled={!editable}
           onClick={() => {
             const data = [
               ...pitch.data,
@@ -456,7 +467,7 @@ export function useManualPitch(
         <Button
           size="sm"
           variant="outline"
-          disabled={locked || !canRemove}
+          disabled={!editable || !canRemove}
           onClick={() => remove(activeIndex)}
         >
           ピッチ点を削除
@@ -467,7 +478,7 @@ export function useManualPitch(
             <select
               aria-label="ピッチ点の補間"
               className="h-8 rounded-md border bg-card px-1"
-              disabled={locked}
+              disabled={!editable}
               value={pitch.data[activeIndex].shape}
               onChange={(e) =>
                 apply(
@@ -500,7 +511,7 @@ export function useManualPitch(
             type="checkbox"
             className="size-4 align-middle"
             checked={pitch.snap_first}
-            disabled={locked || !pitch.data.length}
+            disabled={!editable || !pitch.data.length}
             onChange={(e) =>
               apply(
                 {
