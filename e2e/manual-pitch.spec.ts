@@ -455,10 +455,13 @@ test("ドラッグ中に矢印キーを押しても、確定前の位置を記�
   await page.keyboard.press("ArrowUp");
   await expect(editStatus(page)).toHaveText("編集はありません");
   // 黙って無視せず、理由を案内する
-  await expect(page.getByText(/ドラッグ中はキーで点を編集できません/)).toBeVisible();
+  const notice = page.getByText(/ドラッグ中は点を編集できません/);
+  await expect(notice).toBeVisible();
   await page.keyboard.press("Escape");
   await page.mouse.up();
   await expect(editStatus(page)).toHaveText("編集はありません");
+  // ドラッグを終えたら、ドラッグ中の案内は消す
+  await expect(notice).toBeHidden();
 });
 
 test("矢印キーの長押しは、元に戻した後に古い操作とつながらない", async ({ page }) => {
@@ -1019,4 +1022,57 @@ test("表示範囲の外に点を追加した時は、そのことを案内す�
   await expect(point(page)).toHaveAttribute("tabindex", "-1");
   await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
   await expect(page.getByText(/追加した点は表示範囲の外にあります/)).toBeVisible();
+});
+
+test("選んでいる点が表示範囲の外にある時は、パネルからも削除・補間の変更をしない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  const box = (await roll(page).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (const dy of [-3000, 3000]) {
+    await page.mouse.wheel(0, dy);
+    const after = await point(page).boundingBox();
+    if (after && (after.y + after.height < box.y || after.y > box.y + box.height)) break;
+  }
+  await expect(page.getByRole("button", { name: "ピッチ点 1", exact: true })).toHaveAttribute(
+    "tabindex",
+    "-1",
+  );
+  await page.getByRole("button", { name: "ピッチ点を削除", exact: true }).click();
+  await page.getByRole("combobox", { name: "ピッチ点の補間" }).selectOption({ index: 1 });
+  await expect(page.getByText(/表示範囲の外の点は編集できません/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(2);
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("ドラッグ中にパネルを操作しても、黙って無視せず理由を案内する", async ({ page }) => {
+  await openSelectedNote(page);
+  await startDrag(page);
+  // 別の指でタップした時のように、ドラッグを続けたままパネルのボタンを押す
+  await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).dispatchEvent("click");
+  await expect(page.getByText(/ドラッグ中は点を編集できません/)).toBeVisible();
+  await page.mouse.up();
+  await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(2);
+});
+
+test("並べ替えを Ctrl+Z で戻して点が押せなくなっても、フォーカスを失わない", async ({ page }) => {
+  await openUnsortedNote(page);
+  await page.getByRole("button", { name: "時間順に並べ替える", exact: true }).click();
+  await point(page).focus();
+  await page.keyboard.press("Control+z");
+  await expect(point(page)).toBeDisabled();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).not.toBe("BODY");
+});
+
+test("確定前のビブラート入力を反映できないまま別のノートを選ぶと、取り消したことを案内する", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  await length.fill("");
+  await clickNote(page, 0);
+  await expect(
+    page.getByText(/確定前のビブラートの入力は、反映できなかったため取り消しました/),
+  ).toBeVisible();
 });

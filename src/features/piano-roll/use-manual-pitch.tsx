@@ -82,8 +82,20 @@ function stopDrag(drag: RefObject<Drag | null>) {
   drag.current = null;
 }
 
-/** フォーカスのあった要素が消えるなどして、どこにもフォーカスが無いか */
-const lostFocus = () => !document.activeElement || document.activeElement === document.body;
+/** ドラッグ中に点を編集しようとした時の案内 */
+const DRAG_NOTICE = "ドラッグ中は点を編集できません。離してから操作してください。";
+
+/** ノートを切り替えた時などに、確定前のビブラートの入力を反映できなかった時の案内 */
+const LOST_NOTICE = "確定前のビブラートの入力は、反映できなかったため取り消しました。";
+
+/**
+ * フォーカスのあった要素が消えるなどして、どこにもフォーカスが無いか。フォーカスのある要素が
+ * disabled になった場合も含める（ブラウザが後でフォーカスを外すため）
+ */
+const lostFocus = () => {
+  const el = document.activeElement;
+  return !el || el === document.body || el.matches(":disabled");
+};
 
 /** 押せる「元に戻す」「やり直す」のボタン（target がその中なら、そのボタン） */
 const historyButton = (target: EventTarget | null) =>
@@ -168,7 +180,8 @@ export function useManualPitch(
     const button = buttons?.[Math.min(index, buttons.length - 1)];
     // 描画範囲の外の点（Tab で移れない点）には移さず、ピアノロールへ戻す
     const target =
-      button && button.tabIndex !== -1
+      // 押せない点（並べ替えが必要な時の disabled）にも移さない（focus が効かず、フォーカスが無くなるため）
+      button && button.tabIndex !== -1 && !button.disabled
         ? button
         : (container?.closest<HTMLElement>("section") ?? keep?.section);
     target?.focus({ preventScroll: true });
@@ -219,9 +232,11 @@ export function useManualPitch(
    * 押したまま別の点へフォーカスを移すとキーリピートしか届かないため、点の番号でも区別する
    */
   const hold = useRef<{ id: string; note: string | null; index: number } | null>(null);
+  /** ドラッグをやめる。ドラッグ中に出した案内も消す */
   const cancel = () => {
     stopDrag(drag);
     setDraft(null);
+    setNotice(null);
   };
   useEffect(() => {
     const key = (e: globalThis.KeyboardEvent) => {
@@ -230,6 +245,7 @@ export function useManualPitch(
         e.stopPropagation();
         stopDrag(drag);
         setDraft(null);
+        setNotice(null);
       }
     };
     window.addEventListener("keydown", key, true);
@@ -261,6 +277,7 @@ export function useManualPitch(
         >
           手動ピッチ編集：ノートを 1 つだけ選ぶと、ピッチ点とビブラートを編集できます。
           {selected.size > 1 && `（今は ${selected.size} 個選んでいます）`}
+          <output className="mt-1 block text-xs empty:hidden">{notice}</output>
         </section>
       ),
       previewPitch: null,
@@ -316,7 +333,12 @@ export function useManualPitch(
    */
   const apply = (next: Pitch, label: string, mergeId?: string) => {
     // 時間順に並んでいないノートは、「時間順に並べ替える」以外の編集を受け付けない
-    if (drag.current || locked) return false;
+    if (locked) return false;
+    // ドラッグ中（別の指でパネルを操作した時など）は、黙って無視せず理由を出す
+    if (drag.current) {
+      setNotice(DRAG_NOTICE);
+      return false;
+    }
     return record(label, { pitch: next }, { mergeId });
   };
   const changePoint = (index: number, point: PitchPoint, source = pitch): Pitch => ({
@@ -386,6 +408,13 @@ export function useManualPitch(
     const y = centsToY(adjustedTone(target) * 100 + p.y * 10, cam);
     return { x, y, visible: x >= 0 && x <= viewport.width && y >= 0 && y <= viewport.height };
   };
+  /** 点が描画範囲の外にあるか。外なら、編集しない理由を案内する（キー操作とパネルの操作で共通） */
+  const isHidden = (index: number) => {
+    const p = displayed[index];
+    if (!p || placeOf(p).visible) return false;
+    setNotice("表示範囲の外の点は編集できません。点が見える位置までスクロールしてください。");
+    return true;
+  };
   const pointKey = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
     // Esc（選択の解除）と Ctrl / ⌘ + A（全選択）はピアノロールに任せる。ノートが 1 つだけ選ばれた
     // 状態でなくなり点のボタンが消えるため、選択が変わる前にピアノロールへフォーカスを移す
@@ -408,15 +437,12 @@ export function useManualPitch(
     // ドラッグで点を動かしている間は、キーでは編集しない（確定前のドラッグを土台にしないため）。
     // 選んでいる点も変えず、黙って無視せず理由を出す
     if (drag.current?.moved) {
-      setNotice("ドラッグ中はキーで点を編集できません。離してから操作してください。");
+      setNotice(DRAG_NOTICE);
       return;
     }
     // スクロールで描画範囲の外へ出た点は、フォーカスが残っていてもキーで編集しない
     // （見えないまま動かしたり消したりしないため）
-    if (!placeOf(displayed[index]).visible) {
-      setNotice("表示範囲の外の点は編集できません。点が見える位置までスクロールしてください。");
-      return;
-    }
+    if (isHidden(index)) return;
     // 点を押しただけで、まだ動かしていないなら、ドラッグをやめてキー操作を受け付ける
     // （ドラッグ中の編集は受け付けないため、押している間のキー操作が黙って失われないようにする）
     if (drag.current && !drag.current.moved) cancel();
@@ -486,7 +512,10 @@ export function useManualPitch(
         onBlur={() => {
           hold.current = null;
         }}
-        onClick={() => setActive(i)}
+        onClick={() => {
+          setActive(i);
+          setNotice(null);
+        }}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.stopPropagation();
@@ -503,6 +532,7 @@ export function useManualPitch(
           e.currentTarget.focus({ preventScroll: true });
           e.currentTarget.setPointerCapture(e.pointerId);
           setActive(i);
+          setNotice(null);
           const box = e.currentTarget.getBoundingClientRect();
           const grip = {
             offsetX: box.left + box.width / 2 - e.clientX,
@@ -584,7 +614,7 @@ export function useManualPitch(
     // フェードインとフェードアウトは合計 100% まで。後から入力した方を優先し、もう片方を削る
     if (field === "in") vibrato.out = Math.min(vibrato.out, 100 - clamp(value, 0, 100));
     if (field === "out") vibrato.in = Math.min(vibrato.in, 100 - clamp(value, 0, 100));
-    record("ビブラートを変更", { vibrato }, { quiet });
+    return record("ビブラートを変更", { vibrato }, { quiet });
   };
   const controls = (
     <section aria-label="手動ピッチ編集" className="space-y-2 rounded-lg border p-3 text-sm">
@@ -637,7 +667,10 @@ export function useManualPitch(
           size="sm"
           variant="outline"
           disabled={!editable || !canRemove}
-          onClick={() => remove(activeIndex)}
+          onClick={() => {
+            // 選んでいる点が見えない時は、パネルからも消さない（キー操作と同じく）
+            if (!isHidden(activeIndex)) remove(activeIndex);
+          }}
         >
           ピッチ点を削除
         </Button>
@@ -649,15 +682,17 @@ export function useManualPitch(
               className="h-8 rounded-md border bg-card px-1"
               disabled={!editable}
               value={pitch.data[activeIndex].shape}
-              onChange={(e) =>
+              onChange={(e) => {
+                // 選んでいる点が見えない時は、パネルからも変えない（キー操作と同じく）
+                if (isHidden(activeIndex)) return;
                 apply(
                   changePoint(activeIndex, {
                     ...pitch.data[activeIndex],
                     shape: e.target.value as PitchPoint["shape"],
                   }),
                   "ピッチ点の補間を変更",
-                )
-              }
+                );
+              }}
             >
               {(
                 [
@@ -720,6 +755,7 @@ export function useManualPitch(
               label={label}
               value={target.vibrato[field]}
               onCommit={(value, quiet) => commitVibrato(field, value, quiet)}
+              onLost={() => setNotice(LOST_NOTICE)}
             />
           ))}
         </div>
@@ -745,11 +781,17 @@ function VibratoInput({
   label,
   value,
   onCommit,
+  onLost,
 }: {
   label: string;
   value: number;
-  /** quiet：入力欄が消える時の確定。対象のノートがもう無いこともあるため、失敗しても表示しない */
-  onCommit: (value: number, quiet: boolean) => void;
+  /**
+   * 確定する。記録できたら true。quiet：入力欄が消える時の確定。対象のノートがもう無いことも
+   * あるため、失敗してもエラーは表示しない（代わりに onLost で知らせる）
+   */
+  onCommit: (value: number, quiet: boolean) => boolean;
+  /** 入力欄が消える時に、確定前の入力を反映できなかった（数値でない・記録できない） */
+  onLost: () => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState(false);
@@ -758,14 +800,19 @@ function VibratoInput({
   // 確定前の入力。Enter・Tab で確定する前に入力欄が消えた場合（別のノートを選んだ時など）も確定させる
   const pending = useRef<string | null>(null);
   const commitRef = useRef(onCommit);
+  const lostRef = useRef(onLost);
   const valueRef = useRef(value);
   useEffect(() => {
     commitRef.current = onCommit;
+    lostRef.current = onLost;
     valueRef.current = value;
   });
   useEffect(
     () => () => {
-      if (isNumberText(pending.current)) commitRef.current(Number(pending.current), true);
+      const text = pending.current;
+      if (text === null) return;
+      // 反映できなかった入力は、黙って捨てずに知らせる
+      if (!isNumberText(text) || !commitRef.current(Number(text), true)) lostRef.current();
     },
     [],
   );
