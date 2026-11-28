@@ -788,3 +788,35 @@ test("ピッチ点が 1 つも無いノートでは、追加の仕方を案内�
   await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
   await expect(empty).toBeHidden();
 });
+
+test("確定前の入力が今の値と同じなら、「元に戻す」は 1 回で記録済みの編集を戻す", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  // 一度別の値を入れてから元の値に戻し、今の値と同じ確定前の入力を作る
+  const original = await length.inputValue();
+  await length.fill("60");
+  await length.fill(original);
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("点を押したまま動かさずにキーを押すと、キー操作を受け付ける", async ({ page }) => {
+  await openSelectedNote(page);
+  const before = (await point(page).boundingBox())!;
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByRole("button", { name: "元に戻す", exact: true })).toHaveAttribute(
+    "title",
+    /ピッチ点を移動/,
+  );
+  // その後にポインターを動かして離しても、ドラッグは始まらない
+  await page.mouse.move(before.x + 40, before.y + 40, { steps: 4 });
+  await page.mouse.up();
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});

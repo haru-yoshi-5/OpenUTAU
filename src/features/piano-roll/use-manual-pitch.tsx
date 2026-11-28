@@ -333,6 +333,9 @@ export function useManualPitch(
     if (!POINT_KEYS.includes(e.key)) return;
     e.preventDefault();
     e.stopPropagation();
+    // 点を押しただけで、まだ動かしていないなら、ドラッグをやめてキー操作を受け付ける
+    // （ドラッグ中の編集は受け付けないため、押している間のキー操作が黙って失われないようにする）
+    if (drag.current && !drag.current.moved) cancel();
     setActive(index);
     if (e.key === "Delete" || e.key === "Backspace") {
       // 長押しでは消さない。消した後はフォーカスが前の点へ移るため、キーリピートで次々と消えてしまう
@@ -639,8 +642,10 @@ function VibratoInput({
   // 確定前の入力。Enter・Tab で確定する前に入力欄が消えた場合（別のノートを選んだ時など）も確定させる
   const pending = useRef<string | null>(null);
   const commitRef = useRef(onCommit);
+  const valueRef = useRef(value);
   useEffect(() => {
     commitRef.current = onCommit;
+    valueRef.current = value;
   });
   useEffect(
     () => () => {
@@ -717,8 +722,12 @@ function VibratoInput({
     const onPointerCancel = () => {
       if (awaitingHistory.current) commitNow();
     };
-    // 「元に戻す」のクリックは、ボタンに届く前（document の capture 段階）で止めて、入力だけを取り消す
+    // 「元に戻す」のクリックは、ボタンに届く前（document の capture 段階）で止めて、入力だけを取り消す。
+    // 入力が今の値と同じ（取り消しても何も変わらない）なら止めずに、通常どおり元に戻す
+    // （元に戻すと、下の編集ストアの購読で入力を捨てる）
     const onClick = (e: MouseEvent) => {
+      const text = pending.current;
+      if (isNumberText(text) && Number(text) === valueRef.current) return;
       if (
         awaitingHistory.current?.matches('[data-history-action="undo"]:not(:disabled)') &&
         e.target instanceof Element &&
