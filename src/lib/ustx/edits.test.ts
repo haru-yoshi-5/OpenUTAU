@@ -237,6 +237,15 @@ describe("pruneEdit", () => {
     });
   });
 
+  it("自動接続中は、先頭の点の高さだけが違うピッチを差分にしない（曲線が変わらないため）", () => {
+    expect(original.pitch.snap_first).toBe(true);
+    const data = original.pitch.data.map((p, i) => (i === 0 ? { ...p, y: p.y + 20 } : p));
+    expect(pruneEdit(original, { pitch: { ...original.pitch, data } })).toBeUndefined();
+    // 自動接続を外していれば、高さの違いは差分になる
+    const unsnapped = { ...original, pitch: { ...original.pitch, snap_first: false } };
+    expect(pruneEdit(unsnapped, { pitch: { snap_first: false, data } })).toBeDefined();
+  });
+
   it("元データのピッチ点に -0 があっても、同じ位置に戻した点は差分にしない", () => {
     const withNegativeZero = {
       ...original,

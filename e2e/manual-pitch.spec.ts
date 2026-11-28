@@ -1157,3 +1157,12 @@ test("押したままになったポインターの後でも、Tab で「やり�
   await redo.focus();
   await expect(redo).toBeEnabled();
 });
+
+test("自動接続を外して付け直しただけなら、編集済みにならない", async ({ page }) => {
+  await openSelectedNote(page);
+  const snap = page.getByRole("checkbox", { name: "先頭点を前のノートに接続" });
+  await snap.uncheck();
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await snap.check();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});

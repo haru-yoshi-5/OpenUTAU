@@ -208,6 +208,8 @@ export function useManualPitch(
   useEffect(() => {
     stopDrag(drag);
   }, [noteId, showPitch, panMode]);
+  // ピアノロールごと消えた時（データの破棄など）も、予約済みのプレビュー更新とドラッグを片付ける
+  useEffect(() => () => stopDrag(drag), []);
   // ドラッグ開始時から編集が変わった時（ドラッグ中の Ctrl+Z など）も片付ける。ドラッグ中の点が
   // 消えると pointerup が届かないうえ、離しても確定しない（ドラッグ開始時と編集が違う）ため。
   // 押した時に確定したビブラートの入力は開始時の編集に含まれるので、ドラッグを止めない

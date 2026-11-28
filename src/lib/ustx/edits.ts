@@ -45,9 +45,17 @@ function samePitch(a: RawNote["pitch"], original: RawNote["pitch"]): boolean {
   return isDeepStrictEqual(comparablePitch(a), comparablePitch(original)) === null;
 }
 
-/** 比べる項目（x・y・shape と snap_first）だけを写す。-0 は 0 と同じ値とみなす（normalizePitch と同じ） */
+/**
+ * 比べる項目（x・y・shape と snap_first）だけを写す。-0 は 0 と同じ値とみなす（normalizePitch と同じ）。
+ * 自動接続中（snap_first）は、保存順の先頭の点の高さが前のノートとの音高差に置き換わり、保存した y は
+ * 曲線に影響しないため比べない（自動接続を外して付け直しただけの編集を、差分にしないため）
+ */
 const comparablePitch = (pitch: RawNote["pitch"]): RawNote["pitch"] => ({
-  data: pitch.data.map(({ x, y, shape }) => ({ x: x + 0, y: y + 0, shape })),
+  data: pitch.data.map(({ x, y, shape }, i) => ({
+    x: x + 0,
+    y: pitch.snap_first && i === 0 ? 0 : y + 0,
+    shape,
+  })),
   snap_first: pitch.snap_first,
 });
 

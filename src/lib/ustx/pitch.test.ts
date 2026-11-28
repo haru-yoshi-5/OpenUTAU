@@ -184,6 +184,19 @@ describe("renderPartPitch", () => {
     expect(unsorted.startTick).toBeLessThanOrEqual(0);
   });
 
+  it("後のノートの点が先頭ノートより前にあっても、その点から計算を始める", () => {
+    const far = {
+      data: [{ x: -2000, y: 0, shape: "io" as const }],
+      snap_first: false,
+    };
+    const c = render(
+      part([note(1920, 480, 60), note(2400, 480, 62, { pitch: far })], { position: 9600 }),
+      axis,
+    );
+    // 2 つ目のノート（2400 tick）から 2000 ms（1920 tick）前 = 480 tick の点も計算範囲に入る
+    expect(c.startTick).toBeLessThanOrEqual(480);
+  });
+
   it("ノートが無ければ null", () => {
     expect(renderPartPitch(part([]), axis)).toBeNull();
   });
