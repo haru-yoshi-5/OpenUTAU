@@ -707,6 +707,8 @@ test("パネルのチェックボックスで Space を押しても、表示移�
   await openSelectedNote(page);
   const snap = page.getByRole("checkbox", { name: "先頭点を前のノートに接続" });
   const checked = await snap.isChecked();
+  // ポインターはピアノロールの外に置く（上にあると、Space は表示の移動に使う）
+  await page.mouse.move(0, 0);
   await snap.focus();
   await page.keyboard.down(" ");
   // 表示移動モードの間は、点がポインター操作を受け付けない
@@ -782,6 +784,8 @@ test("ピアノロールの外の role で作った部品で Space を押して�
     document.body.append(el);
   });
   await page.getByRole("switch", { name: "テスト用スイッチ" }).focus();
+  // ポインターはピアノロールの外に置く（上にあると、Space は表示の移動に使う）
+  await page.mouse.move(0, 0);
   await page.keyboard.down(" ");
   await expect(point(page)).toHaveCSS("pointer-events", "auto");
   await page.keyboard.up(" ");
@@ -1102,4 +1106,54 @@ test("Space を押している間は、点にフォーカスがあっても矢�
   await page.keyboard.press("ArrowUp");
   await page.keyboard.up(" ");
   await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("外のボタンにフォーカスが残っていても、ピアノロールの上なら Space で表示を移動でき、ボタンは押されない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  const undo = page.getByRole("button", { name: "元に戻す", exact: true });
+  await undo.focus();
+  // ボタンへのフォーカスでページがスクロールするため、ピアノロールを表示してからポインターを載せる
+  await roll(page).hover({ position: { x: 120, y: 60 } });
+  await expect(undo).toBeFocused();
+  await page.keyboard.down(" ");
+  await expect(point(page)).toHaveCSS("pointer-events", "none");
+  await page.keyboard.up(" ");
+  // Space で「元に戻す」は押されない
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+});
+
+test("点をドラッグしている間に Space を押しても、ドラッグは取り消されない", async ({ page }) => {
+  await openSelectedNote(page);
+  await startDrag(page);
+  await page.keyboard.down(" ");
+  await expect(point(page)).toHaveCSS("pointer-events", "auto");
+  await page.keyboard.up(" ");
+  await page.mouse.up();
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+});
+
+test("押したままになったポインターの後でも、Tab で「やり直す」へ移るとやり直しの履歴を消さない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  // pointerup が届かなかった時（コンテキストメニューなど）のように、pointerdown だけを送る
+  await page.locator("body").dispatchEvent("pointerdown", { button: 2 });
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  await length.fill("60");
+  const redo = page.getByRole("button", { name: "やり直す", exact: true });
+  // Tab キーを押してから移る（keydown が blur より先に届く）
+  await length.evaluate((el) =>
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })),
+  );
+  await redo.focus();
+  await expect(redo).toBeEnabled();
 });

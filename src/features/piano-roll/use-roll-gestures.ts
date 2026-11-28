@@ -86,17 +86,33 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
 
   // Space を押している間は、左ドラッグを表示の移動にする
   useEffect(() => {
+    /** ピアノロールの外の部品にフォーカスがあるまま、表示の移動に Space を使っているか */
+    let fromOutside = false;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== " ") return;
       if (e.type === "keyup") {
+        // 外の部品（ボタンなど）は keyup でクリックされるため、表示の移動に使った Space では押させない
+        if (fromOutside) e.preventDefault();
+        fromOutside = false;
         setSpaceHeld(false);
         return;
       }
-      // 文字の入力欄と、ピアノロールの外でフォーカスを持つ部品では、Space はその部品の操作に使う
-      if (isTextInput(e.target) || isOutsideFocus(e.target, containerRef.current)) return;
+      // 文字の入力欄では、Space は文字の入力に使う
+      if (isTextInput(e.target)) return;
+      if (isOutsideFocus(e.target, containerRef.current)) {
+        // ピアノロールの外の部品（ボタン・チェックボックスなど）にフォーカスがある時は、
+        // ポインターがピアノロールの上にあれば表示の移動に使い、その部品は操作しない。
+        // ポインターが外にあれば、Space はその部品の操作に使う
+        if (!containerRef.current?.matches(":hover")) return;
+        e.preventDefault();
+        fromOutside = true;
+      }
       setSpaceHeld(true);
     };
-    const onBlur = () => setSpaceHeld(false);
+    const onBlur = () => {
+      fromOutside = false;
+      setSpaceHeld(false);
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
     window.addEventListener("blur", onBlur);

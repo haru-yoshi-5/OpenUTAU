@@ -424,10 +424,17 @@ export function useManualPitch(
     }
     // Ctrl+Z などのショートカットは、ピアノロールとツールバーに任せる
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // 点をドラッグしている間の Space は無視する。表示移動モードに入ると、ドラッグが取り消されるため
+    if (e.key === " " && drag.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (SELECT_KEYS.includes(e.key)) {
       setActive(index);
       // Space は「押しながらドラッグで表示を移動」にも使うため、ピアノロールへそのまま伝える
-      // （ピアノロールが既定動作を止めてクリックが起きないので、ここで選ぶ）
+      // （意図した動き。点をクリックした後も Space＋ドラッグで表示を動かせるようにするため。
+      // 押している間は表示移動モードになる。ピアノロールが既定動作を止めてクリックが起きないので、ここで選ぶ）
       if (e.key !== " ") e.stopPropagation();
       return;
     }
@@ -937,7 +944,15 @@ function VibratoInput({
       // 古いブラウザは returnValue の設定で確認を出す
       e.returnValue = "";
     };
+    // pointerup が届かない場合（コンテキストメニューやウィンドウの外で離した時など）に押したままと
+    // みなし続けないよう、キーを押した時とウィンドウからフォーカスが外れた時にも戻す
+    // （Tab の keydown は入力欄の blur より先に届くため、Tab での移動はキーボードの操作とみなせる）
+    const release = () => {
+      pressing.current = false;
+    };
     window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("keydown", release, true);
+    window.addEventListener("blur", release);
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("pointerup", onPointerUp, true);
     document.addEventListener("pointercancel", onPointerCancel, true);
@@ -947,6 +962,8 @@ function VibratoInput({
       document.removeEventListener("focusout", onFocusOut, true);
       unsubscribe();
       window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("keydown", release, true);
+      window.removeEventListener("blur", release);
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("pointerup", onPointerUp, true);
       document.removeEventListener("pointercancel", onPointerCancel, true);
