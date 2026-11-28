@@ -22,6 +22,8 @@ export interface EditCommand {
   /** 画面に出す操作名（例：「ビブラートをオンにする」） */
   label: string;
   changes: AppliedChange[];
+  /** まとめて記録する一連の操作（キーの長押しなど）の目印 */
+  mergeId?: string;
 }
 
 /** ノートのキーから、読み込んだときのノートを引く索引 */
@@ -39,8 +41,12 @@ interface EditState {
    * - 元データと同じ値の項目は差分から外す（どの画面から呼んでも「編集済み」が正しくなるように）
    * - 不正な差分・存在しないノートへの差分は UstxError を投げ、何も変えない
    * 実際に変わるノートが無ければ何も記録しない。
+   * mergeId を指定すると、直前の操作が同じ mergeId・同じ名前なら、ノートの組み合わせが違っても
+   * 1 つの操作にまとめる（キーの長押しなどで、細かい変更が履歴を埋めないようにする）。
+   * まとめた結果、全部のノートが元の値に戻ったら履歴から消す。
+   * 目印が一致するときだけまとめるので、Undo の後などに関係のない古い操作とはつながらない。
    */
-  apply: (label: string, changes: readonly EditChange[]) => void;
+  apply: (label: string, changes: readonly EditChange[], options?: { mergeId?: string }) => void;
   undo: () => void;
   redo: () => void;
   /** ファイルを読み込んだとき（source を渡す）・破棄したとき（null）に、差分と履歴を捨てる */
@@ -79,7 +85,7 @@ export const useEditStore = create<EditState>()((set, get) => ({
   undoStack: [],
   redoStack: [],
 
-  apply: (label, changes) => {
+  apply: (label, changes, options) => {
     const { originals, edits, undoStack } = get();
     if (!originals) {
       throw new UstxError("invalid-edit", "編集できるファイルが読み込まれていません。");
@@ -94,9 +100,34 @@ export const useEditStore = create<EditState>()((set, get) => ({
       applied.push({ key, before, after: next });
     }
     if (applied.length === 0) return;
+    const mergeId = options?.mergeId;
+    const last = undoStack.at(-1);
+    if (mergeId !== undefined && last?.mergeId === mergeId && last.label === label) {
+      // 同じ長押しの操作は、ノートの組み合わせが途中で変わっても 1 つにまとめる。
+      // 直前の操作の「変更前」を引き継ぎ、変更後だけを差し替える（今回変えないノートはそのまま残す）
+      const afterByKey = new Map(applied.map((c) => [c.key, c.after]));
+      const lastKeys = new Set(last.changes.map((c) => c.key));
+      const merged = [
+        ...last.changes.map((c) =>
+          afterByKey.has(c.key) ? { ...c, after: afterByKey.get(c.key) } : c,
+        ),
+        ...applied.filter((c) => !lastKeys.has(c.key)),
+      ];
+      // 全部のノートが元の値に戻った場合だけ、操作ごと履歴から消す
+      const unchanged = merged.every((c) => isDeepStrictEqual(c.before, c.after) === null);
+      set({
+        edits: withChanges(edits, applied, "after"),
+        undoStack: [
+          ...undoStack.slice(0, -1),
+          ...(unchanged ? [] : [{ label, changes: merged, mergeId }]),
+        ],
+        redoStack: [],
+      });
+      return;
+    }
     set({
       edits: withChanges(edits, applied, "after"),
-      undoStack: [...undoStack, { label, changes: applied }].slice(-HISTORY_LIMIT),
+      undoStack: [...undoStack, { label, changes: applied, mergeId }].slice(-HISTORY_LIMIT),
       redoStack: [],
     });
   },

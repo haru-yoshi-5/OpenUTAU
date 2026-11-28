@@ -9,9 +9,9 @@ import type { PitchPoint, RawNote, Vibrato } from "./types";
 /** OpenUtau でビブラートをオンにしたときの長さ（NotePresets.DefaultVibrato.VibratoLength） */
 export const DEFAULT_VIBRATO_LENGTH = 75;
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-function invalidEdit(message: string, detail?: string): never {
+export function invalidEdit(message: string, detail?: string): never {
   throw new UstxError("invalid-edit", message, detail);
 }
 
@@ -25,7 +25,8 @@ export function normalizePitch(pitch: RawNote["pitch"]): RawNote["pitch"] {
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
       invalidEdit("ピッチ点の位置・高さに数値以外の値が含まれています。");
     }
-    return { x, y, shape };
+    // 丸めで生じる -0 は元の 0 と別の値とみなされ、元の位置に戻しても編集が残るため 0 にそろえる
+    return { x: x + 0, y: y + 0, shape };
   });
   if (pitch.snap_first && data.length === 0) {
     invalidEdit("ピッチ点をすべて削除することはできません（OpenUtau で開けなくなるため）。");
@@ -33,6 +34,21 @@ export function normalizePitch(pitch: RawNote["pitch"]): RawNote["pitch"] {
   // Array.prototype.sort は安定ソートなので、同じ x の点は元の順序を保つ
   data.sort((a, b) => a.x - b.x);
   return { data, snap_first: pitch.snap_first };
+}
+
+/**
+ * ピッチ点を x の昇順に並べる（同じ x の点は元の順序を保つ）。並んでいれば同じオブジェクトを返す。
+ * 読み込み時は OpenUtau と同じく保存順のまま扱い、編集の記録時（normalizePitch）と同じ順序が要る所で使う
+ */
+export function sortPitchPoints(pitch: RawNote["pitch"]): RawNote["pitch"] {
+  const data = sortPoints(pitch.data);
+  return data === pitch.data ? pitch : { ...pitch, data };
+}
+
+/** 点の配列を x の昇順に並べる（安定ソート）。並んでいれば同じ配列を返す */
+export function sortPoints<T extends { x: number }>(points: T[]): T[] {
+  if (points.every((p, i) => i === 0 || points[i - 1].x <= p.x)) return points;
+  return [...points].sort((a, b) => a.x - b.x);
 }
 
 /**

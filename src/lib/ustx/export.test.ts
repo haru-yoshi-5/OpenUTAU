@@ -5,7 +5,11 @@ import { UstxError } from "./errors";
 import { exportUnchanged, serializeDocument, serializeVerified, verifyRoundTrip } from "./export";
 import { loadUstx } from "./load";
 
-const demoText = readFileSync(join(process.cwd(), "public/samples/demo.ustx"), "utf8");
+// チェックアウト時の改行形式に依存せず、各テストで LF / CRLF を明示する。
+const demoText = readFileSync(join(process.cwd(), "public/samples/demo.ustx"), "utf8").replace(
+  /\r\n/g,
+  "\n",
+);
 const enc = (text: string) => new TextEncoder().encode(text);
 const withBomCrlf = new Uint8Array([0xef, 0xbb, 0xbf, ...enc(demoText.replace(/\n/g, "\r\n"))]);
 

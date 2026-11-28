@@ -16,7 +16,11 @@ import { UstxError } from "./errors";
 import { loadUstx } from "./load";
 import type { Vibrato } from "./types";
 
-const demoText = readFileSync(join(process.cwd(), "public/samples/demo.ustx"), "utf8");
+// チェックアウト時の改行形式に依存せず、各テストで LF / CRLF を明示する。
+const demoText = readFileSync(join(process.cwd(), "public/samples/demo.ustx"), "utf8").replace(
+  /\r\n/g,
+  "\n",
+);
 const enc = (text: string) => new TextEncoder().encode(text);
 const dec = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const load = (text = demoText) => loadUstx("demo.ustx", enc(text));
@@ -213,12 +217,46 @@ describe("pruneEdit", () => {
     expect(pruneEdit(original, { pitch, vibrato: original.vibrato })).toEqual({ pitch });
   });
 
-  it("元データのピッチ点が昇順でなくても、並べ替えると同じなら差分にしない", () => {
+  it("元データのピッチ点が昇順でなければ、並べ替えただけでも差分として残す（OpenUtau の曲線が変わるため）", () => {
     const unsorted = {
       ...original,
       pitch: { snap_first: true, data: [...original.pitch.data].reverse() },
     };
-    expect(pruneEdit(unsorted, { pitch: original.pitch })).toBeUndefined();
+    expect(pruneEdit(unsorted, { pitch: original.pitch })).toEqual({ pitch: original.pitch });
+  });
+
+  it("元データとまったく同じピッチは、昇順でなくても並べ替えた差分を作らない", () => {
+    const unsorted = {
+      ...original,
+      pitch: { snap_first: true, data: [...original.pitch.data].reverse() },
+    };
+    expect(pruneEdit(unsorted, { pitch: unsorted.pitch })).toBeUndefined();
+    const changed = vibrato({ length: 60 });
+    expect(pruneEdit(unsorted, { pitch: unsorted.pitch, vibrato: changed })).toEqual({
+      vibrato: changed,
+    });
+  });
+
+  it("自動接続中は、先頭の点の高さだけが違うピッチを差分にしない（曲線が変わらないため）", () => {
+    expect(original.pitch.snap_first).toBe(true);
+    const data = original.pitch.data.map((p, i) => (i === 0 ? { ...p, y: p.y + 20 } : p));
+    expect(pruneEdit(original, { pitch: { ...original.pitch, data } })).toBeUndefined();
+    // 自動接続を外していれば、高さの違いは差分になる
+    const unsnapped = { ...original, pitch: { ...original.pitch, snap_first: false } };
+    expect(pruneEdit(unsnapped, { pitch: { snap_first: false, data } })).toBeDefined();
+  });
+
+  it("元データのピッチ点に -0 があっても、同じ位置に戻した点は差分にしない", () => {
+    const withNegativeZero = {
+      ...original,
+      pitch: { ...original.pitch, data: original.pitch.data.map((p) => ({ ...p, y: p.y || -0 })) },
+    };
+    expect(withNegativeZero.pitch.data.some((p) => Object.is(p.y, -0))).toBe(true);
+    const moved = original.pitch.data.map((p) => ({ ...p, y: p.y + 10 }));
+    expect(
+      pruneEdit(withNegativeZero, { pitch: { ...original.pitch, data: moved } }),
+    ).toBeDefined();
+    expect(pruneEdit(withNegativeZero, { pitch: original.pitch })).toBeUndefined();
   });
 
   it("元データのビブラートが範囲外でも、読み込み時に丸めた値と同じなら差分にしない", () => {

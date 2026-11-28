@@ -1,9 +1,8 @@
 import { type Document, isMap, YAMLSeq } from "yaml";
 import { isDeepStrictEqual } from "./deep-equal";
-import { UstxError } from "./errors";
 import { exportUnchanged, serializeVerified } from "./export";
 import type { LoadedUstx, Note, Project } from "./load";
-import { normalizePitch, normalizeVibrato } from "./normalize";
+import { invalidEdit, normalizePitch, normalizeVibrato } from "./normalize";
 import type { RawNote, Vibrato } from "./types";
 
 /**
@@ -30,10 +29,6 @@ export function parseNoteKey(key: NoteKey): { partIndex: number; noteIndex: numb
 
 export { DEFAULT_VIBRATO_LENGTH, normalizePitch, normalizeVibrato } from "./normalize";
 
-function invalidEdit(message: string, detail?: string): never {
-  throw new UstxError("invalid-edit", message, detail);
-}
-
 export function normalizeEdit(edit: NoteEdit): NoteEdit {
   return {
     ...(edit.pitch && { pitch: normalizePitch(edit.pitch) }),
@@ -41,14 +36,28 @@ export function normalizeEdit(edit: NoteEdit): NoteEdit {
   };
 }
 
-/** ピッチ点を正規化した形で比べる。元データが正規化できない（0 点など）なら、一致しないとみなす */
+/**
+ * ピッチ点が元データと同じかを比べる。点の並び順も比べる。
+ * OpenUtau は保存された順序のまま補間し、先頭の点を前のノートに接続するため、
+ * 並べ替えただけでも曲線が変わる（差分として書き出す必要がある）
+ */
 function samePitch(a: RawNote["pitch"], original: RawNote["pitch"]): boolean {
-  try {
-    return isDeepStrictEqual(a, normalizePitch(original)) === null;
-  } catch {
-    return false;
-  }
+  return isDeepStrictEqual(comparablePitch(a), comparablePitch(original)) === null;
 }
+
+/**
+ * 比べる項目（x・y・shape と snap_first）だけを写す。-0 は 0 と同じ値とみなす（normalizePitch と同じ）。
+ * 自動接続中（snap_first）は、保存順の先頭の点の高さが前のノートとの音高差に置き換わり、保存した y は
+ * 曲線に影響しないため比べない（自動接続を外して付け直しただけの編集を、差分にしないため）
+ */
+const comparablePitch = (pitch: RawNote["pitch"]): RawNote["pitch"] => ({
+  data: pitch.data.map(({ x, y, shape }, i) => ({
+    x: x + 0,
+    y: pitch.snap_first && i === 0 ? 0 : y + 0,
+    shape,
+  })),
+  snap_first: pitch.snap_first,
+});
 
 /**
  * 差分を正規化し、元データと同じ値の項目を外す。何も残らなければ undefined（＝元データのまま）を返す。
@@ -58,7 +67,11 @@ export function pruneEdit(
   original: Pick<RawNote, "pitch" | "vibrato">,
   edit: NoteEdit,
 ): NoteEdit | undefined {
-  const next = normalizeEdit(edit);
+  // 元データとまったく同じ（並び順も同じ）ピッチは、正規化で並べ替える前に外す。
+  // 時間順に並んでいないノートで、何も変えていないのに並べ替えた曲線が差分にならないようにする
+  const next = normalizeEdit(
+    edit.pitch && samePitch(edit.pitch, original.pitch) ? { vibrato: edit.vibrato } : edit,
+  );
   if (next.pitch && samePitch(next.pitch, original.pitch)) delete next.pitch;
   if (next.vibrato && isDeepStrictEqual(next.vibrato, original.vibrato) === null) {
     delete next.vibrato;
