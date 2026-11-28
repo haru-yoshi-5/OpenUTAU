@@ -165,6 +165,25 @@ describe("renderPartPitch", () => {
     expect(Math.min(...values)).toBeLessThan(5955);
   });
 
+  it("先頭ノートの点が時間順でなくても、最も早い点から計算を始める", () => {
+    const pitch = (data: { x: number; y: number }[]) => ({
+      data: data.map((p) => ({ ...p, shape: "io" as const })),
+      snap_first: false,
+    });
+    const at = (data: { x: number; y: number }[]) =>
+      render(part([note(960, 480, 60, { pitch: pitch(data) })], { position: 4800 }), axis);
+    const sorted = at([
+      { x: -1000, y: 0 },
+      { x: 0, y: 0 },
+    ]);
+    const unsorted = at([
+      { x: 0, y: 0 },
+      { x: -1000, y: 0 },
+    ]);
+    expect(unsorted.startTick).toBe(sorted.startTick);
+    expect(unsorted.startTick).toBeLessThanOrEqual(0);
+  });
+
   it("ノートが無ければ null", () => {
     expect(renderPartPitch(part([]), axis)).toBeNull();
   });

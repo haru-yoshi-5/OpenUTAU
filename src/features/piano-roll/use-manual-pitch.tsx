@@ -432,6 +432,8 @@ export function useManualPitch(
       return;
     }
     if (!POINT_KEYS.includes(e.key)) return;
+    // Space を押している（表示移動モード）間は点を編集せず、ピアノロールへ任せる（矢印キーで表示を動かす）
+    if (panMode) return;
     e.preventDefault();
     e.stopPropagation();
     // ドラッグで点を動かしている間は、キーでは編集しない（確定前のドラッグを土台にしないため）。
@@ -795,8 +797,8 @@ function VibratoInput({
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState(false);
-  /** 確定前の入力を「やり直す」で取り消した時の案内 */
-  const [dropped, setDropped] = useState(false);
+  /** 確定前の入力を「やり直す」「元に戻す」で取り消した時の、その操作（案内に使う） */
+  const [dropped, setDropped] = useState<"元に戻した" | "やり直した" | null>(null);
   // 確定前の入力。Enter・Tab で確定する前に入力欄が消えた場合（別のノートを選んだ時など）も確定させる
   const pending = useRef<string | null>(null);
   const commitRef = useRef(onCommit);
@@ -918,11 +920,15 @@ function VibratoInput({
       if (!awaitingHistory.current) return;
       if (state.undoStack === prev.undoStack && state.redoStack === prev.redoStack) return;
       // やり直すと入力は捨てる（確定すると新しい編集になり、やり直した内容を上書きするため）。
-      // 今の値と違う入力を捨てた時は、黙って消さずに案内を出す
+      // 履歴ボタンにフォーカスしたまま Ctrl+Z を押した時など、元に戻した場合も同じく捨てる。
+      // 今の値と違う入力を捨てた時は、黙って消さずに、どちらの操作で捨てたかを案内する
       const text = pending.current;
       const lost = isNumberText(text) && Number(text) !== valueRef.current;
       discardRef.current();
-      if (lost) setDropped(true);
+      if (lost) {
+        // 元に戻すと、戻した編集がやり直しの履歴に積まれる
+        setDropped(state.redoStack.length > prev.redoStack.length ? "元に戻した" : "やり直した");
+      }
     });
     // 確定前の入力は記録済みの編集に含まれず、ページを閉じる前の確認の対象にならないため、ここで確認を出す
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -964,7 +970,7 @@ function VibratoInput({
           pending.current = e.target.value;
           setDraft(e.target.value);
           setInvalid(false);
-          setDropped(false);
+          setDropped(null);
         }}
         onBlur={(e) => {
           // 履歴ボタンを押している間は、離すまで確定を保留する
@@ -991,7 +997,7 @@ function VibratoInput({
       )}
       {dropped && (
         <output className="ml-1 text-xs text-muted-foreground">
-          やり直したため、確定前の入力を取り消しました
+          {dropped}ため、確定前の入力を取り消しました
         </output>
       )}
     </label>

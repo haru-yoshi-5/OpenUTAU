@@ -121,7 +121,8 @@ export function renderPartPitch(part: VoicePart, timeAxis: TimeAxis): PitchCurve
     return pts;
   });
 
-  const firstX = Math.min(notes[0].position, pointsByNote[0][0]?.x ?? notes[0].position);
+  // 時間順に並んでいない点もあるため、保存順の先頭ではなく最も早い点から計算する
+  const firstX = Math.min(notes[0].position, ...pointsByNote[0].map((p) => p.x));
   const startTick =
     Math.floor(Math.max(firstX - LEADING_TICKS, -part.position) / PITCH_INTERVAL) * PITCH_INTERVAL;
   const endTick = notes.reduce((max, n) => Math.max(max, n.position + n.duration), 0);

@@ -1076,3 +1076,30 @@ test("確定前のビブラート入力を反映できないまま別のノー�
     page.getByText(/確定前のビブラートの入力は、反映できなかったため取り消しました/),
   ).toBeVisible();
 });
+
+test("「元に戻す」にフォーカスしたまま Ctrl+Z を押すと、元に戻したため入力を取り消したと案内する", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  const original = await length.inputValue();
+  await length.fill("60");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).focus();
+  await page.keyboard.press("Control+z");
+  await expect(length).toHaveValue(original);
+  await expect(page.getByText("元に戻したため、確定前の入力を取り消しました")).toBeVisible();
+});
+
+test("Space を押している間は、点にフォーカスがあっても矢印キーで点を動かさない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.down(" ");
+  await expect(point(page)).toHaveCSS("pointer-events", "none");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.up(" ");
+  await expect(editStatus(page)).toHaveText("編集はありません");
+});
