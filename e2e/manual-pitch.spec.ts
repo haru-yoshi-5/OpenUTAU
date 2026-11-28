@@ -313,6 +313,8 @@ test("確定前のビブラート入力があっても、「やり直す」は�
   await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
   await expect(length).toHaveValue(original);
   await expect(page.getByRole("button", { name: "やり直す", exact: true })).toBeDisabled();
+  // 確定前の入力を取り消したことを、黙って消さずに知らせる
+  await expect(page.getByText("やり直したため、確定前の入力を取り消しました")).toBeVisible();
 });
 
 test("ボタンにフォーカスが移らないブラウザでも、確定前の入力でやり直しの履歴を消さない", async ({
@@ -819,4 +821,18 @@ test("点を押したまま動かさずにキーを押すと、キー操作を�
   await page.mouse.up();
   await page.getByRole("button", { name: "元に戻す", exact: true }).click();
   await expect(editStatus(page)).toHaveText("編集はありません");
+});
+
+test("自動接続中の先頭点で上下キーを押すと、高さを変えられない理由を案内する", async ({ page }) => {
+  await openSelectedNote(page);
+  const first = page.getByRole("button", { name: "ピッチ点 1", exact: true });
+  await first.focus();
+  await page.keyboard.press("ArrowUp");
+  const notice = page.getByText(/自動接続中の先頭点は高さを変えられません/);
+  await expect(notice).toBeVisible();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  // 横には動かせ、動かすと案内は消える
+  await page.keyboard.press("ArrowRight");
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await expect(notice).toBeHidden();
 });

@@ -56,7 +56,6 @@ interface Drag {
   frame: number;
 }
 
-/** ドラッグを終える（予約済みのプレビュー更新も取り消す） */
 /** ドラッグのプレビューを次のフレームで更新する（パート全体のピッチを計算し直すため、1 フレームに 1 回） */
 function schedulePreview(
   drag: RefObject<Drag | null>,
@@ -71,6 +70,7 @@ function schedulePreview(
   });
 }
 
+/** ドラッグを終える（予約済みのプレビュー更新も取り消す） */
 function stopDrag(drag: RefObject<Drag | null>) {
   if (drag.current?.frame) cancelAnimationFrame(drag.current.frame);
   drag.current = null;
@@ -122,6 +122,8 @@ export function useManualPitch(
   // プレビューは作成時の編集状態と一緒に保持し、Undo などで編集が変わったら描画時に無効とみなす
   const [draft, setDraft] = useState<{ pitch: Pitch; edits: Edits } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 操作が受け付けられなかった理由の案内（エラーではないもの） */
+  const [notice, setNotice] = useState<string | null>(null);
   const drag = useRef<Drag | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   /** キーボードで点を消した後にフォーカスする点の番号（-1 はピアノロール） */
@@ -145,6 +147,7 @@ export function useManualPitch(
     setActive(0);
     setDraft(null);
     setError(null);
+    setNotice(null);
   }
   // 表示の切り替えや表示移動モードで点のボタンが消えると、pointerup が届かずドラッグが残るため、
   // そのときもプレビューを描画時に片付ける
@@ -258,7 +261,10 @@ export function useManualPitch(
     change: Partial<RawNote>,
     { quiet = false, mergeId }: { quiet?: boolean; mergeId?: string } = {},
   ) => {
-    if (!quiet) setError(null);
+    if (!quiet) {
+      setError(null);
+      setNotice(null);
+    }
     try {
       const after = { ...useEditStore.getState().edits.get(key), ...change };
       useEditStore.getState().apply(label, [{ key, after }], { mergeId });
@@ -349,6 +355,13 @@ export function useManualPitch(
     const step = e.shiftKey ? 10 : 1;
     const dx = (e.key === "ArrowLeft" ? -5 : e.key === "ArrowRight" ? 5 : 0) * step;
     const dy = (e.key === "ArrowUp" ? 1 : e.key === "ArrowDown" ? -1 : 0) * step;
+    // 自動接続中の先頭点は高さが決まっているため、上下キーでは動かない。黙って無視せず理由を出す
+    if (index === snapIndex && dx === 0) {
+      setNotice(
+        "自動接続中の先頭点は高さを変えられません。「先頭点を前のノートに接続」を外すと編集できます。",
+      );
+      return;
+    }
     const x = clampPointTime(pitch.data, index, p.x + dx);
     // 長押し（キーリピート）中の移動は、履歴を埋めないよう同じ長押しの最初の移動とまとめる
     if (!e.repeat || hold.current?.note !== noteId || hold.current.index !== index) {
@@ -611,6 +624,7 @@ export function useManualPitch(
           ))}
         </div>
       </fieldset>
+      <output className="block text-xs text-muted-foreground empty:hidden">{notice}</output>
       {error && (
         <Alert tone="error" title="編集できませんでした">
           {error}
@@ -639,6 +653,8 @@ function VibratoInput({
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState(false);
+  /** 確定前の入力を「やり直す」で取り消した時の案内 */
+  const [dropped, setDropped] = useState(false);
   // 確定前の入力。Enter・Tab で確定する前に入力欄が消えた場合（別のノートを選んだ時など）も確定させる
   const pending = useRef<string | null>(null);
   const commitRef = useRef(onCommit);
@@ -741,7 +757,12 @@ function VibratoInput({
     const unsubscribe = useEditStore.subscribe((state, prev) => {
       if (!awaitingHistory.current) return;
       if (state.undoStack === prev.undoStack && state.redoStack === prev.redoStack) return;
+      // やり直すと入力は捨てる（確定すると新しい編集になり、やり直した内容を上書きするため）。
+      // 今の値と違う入力を捨てた時は、黙って消さずに案内を出す
+      const text = pending.current;
+      const lost = isNumberText(text) && Number(text) !== valueRef.current;
       discardRef.current();
+      if (lost) setDropped(true);
     });
     // 確定前の入力は記録済みの編集に含まれず、ページを閉じる前の確認の対象にならないため、ここで確認を出す
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -781,6 +802,7 @@ function VibratoInput({
           pending.current = e.target.value;
           setDraft(e.target.value);
           setInvalid(false);
+          setDropped(false);
         }}
         onBlur={() => {
           // 履歴ボタンを押している間は、離すまで確定を保留する
@@ -797,6 +819,11 @@ function VibratoInput({
         <span id={errorId} role="alert" className="ml-1 text-xs text-destructive">
           数値を入力してください（元の値に戻しました）
         </span>
+      )}
+      {dropped && (
+        <output className="ml-1 text-xs text-muted-foreground">
+          やり直したため、確定前の入力を取り消しました
+        </output>
       )}
     </label>
   );
