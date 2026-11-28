@@ -654,10 +654,9 @@ test("Delete で点を消した後、表示範囲の外の点にはフォーカ�
   // 先頭の点を表示範囲の外（左）へ出す
   const first = page.getByRole("button", { name: "ピッチ点 1", exact: true });
   await first.focus();
-  const rollBox = (await roll(page).boundingBox())!;
+  // 描画範囲の外へ出ると Tab で移れなくなり（tabindex = -1）、キーでも動かせなくなる
   for (let i = 0; i < 200; i++) {
-    const box = (await first.boundingBox())!;
-    if (box.x + box.width < rollBox.x) break;
+    if ((await first.getAttribute("tabindex")) === "-1") break;
     await page.keyboard.press("Shift+ArrowLeft");
   }
   await expect(first).toHaveAttribute("tabindex", "-1");
@@ -947,4 +946,77 @@ test("自動接続中に最後の 1 点で Delete を押すと、消せない理
     page.getByRole("status").filter({ hasText: /最後の 1 点を削除できません/ }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(1);
+});
+
+test("確定前のビブラート入力から Tab で「やり直す」へ移っても、やり直しの履歴を消さない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  await page.getByRole("button", { name: "元に戻す", exact: true }).click();
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  const original = await length.inputValue();
+  await length.fill("60");
+  const redo = page.getByRole("button", { name: "やり直す", exact: true });
+  // キーボードでフォーカスを移す（入力欄の blur の移り先が「やり直す」になる）
+  await redo.focus();
+  await expect(redo).toBeEnabled();
+  await page.keyboard.press("Enter");
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  await expect(length).toHaveValue(original);
+});
+
+test("Tab で「元に戻す」へ移った後、押さずに離れると、確定前の入力を確定する", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  await page.keyboard.press("ArrowUp");
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  await length.fill("60");
+  const undo = page.getByRole("button", { name: "元に戻す", exact: true });
+  await undo.focus();
+  await expect(undo).toHaveAttribute("title", /ピッチ点を移動/);
+  await point(page).focus();
+  await expect(undo).toHaveAttribute("title", /ビブラートを変更/);
+  await expect(length).toHaveValue("60");
+});
+
+test("フォーカスのある点が Ctrl+Z で消えても、近くの点へフォーカスを移す", async ({ page }) => {
+  await openSelectedNote(page);
+  await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
+  await page.getByRole("button", { name: "ピッチ点 3", exact: true }).focus();
+  await page.keyboard.press("Control+z");
+  await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(2);
+  await expect(point(page)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByRole("button", { name: "元に戻す", exact: true })).toHaveAttribute(
+    "title",
+    /ピッチ点を移動/,
+  );
+});
+
+test("隣の点に追いついて動けない時は、矢印キーを押すと理由を案内する", async ({ page }) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  // 点 2（x = 25）を点 1（x = -25）まで動かし、さらに左へ押す
+  await page.keyboard.press("Shift+ArrowLeft");
+  const notice = page.getByText("隣の点を越えて動かすことはできません。");
+  await expect(notice).toBeHidden();
+  await page.keyboard.press("ArrowLeft");
+  await expect(notice).toBeVisible();
+});
+
+test("表示範囲の外に点を追加した時は、そのことを案内する", async ({ page }) => {
+  await openSelectedNote(page);
+  const box = (await roll(page).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (const dy of [-3000, 3000]) {
+    await page.mouse.wheel(0, dy);
+    const after = await point(page).boundingBox();
+    if (after && (after.y + after.height < box.y || after.y > box.y + box.height)) break;
+  }
+  await expect(point(page)).toHaveAttribute("tabindex", "-1");
+  await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
+  await expect(page.getByText(/追加した点は表示範囲の外にあります/)).toBeVisible();
 });

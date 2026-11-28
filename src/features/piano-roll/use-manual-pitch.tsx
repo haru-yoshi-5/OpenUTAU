@@ -82,6 +82,13 @@ function stopDrag(drag: RefObject<Drag | null>) {
   drag.current = null;
 }
 
+/** フォーカスのあった要素が消えるなどして、どこにもフォーカスが無いか */
+const lostFocus = () => !document.activeElement || document.activeElement === document.body;
+
+/** 押せる「元に戻す」「やり直す」のボタン（target がその中なら、そのボタン） */
+const historyButton = (target: EventTarget | null) =>
+  target instanceof Element ? target.closest("[data-history-action]:not(:disabled)") : null;
+
 /** 矢印キーの長押しを 1 つの操作にまとめるための目印の連番 */
 let holdSeq = 0;
 
@@ -134,15 +141,36 @@ export function useManualPitch(
   const overlayRef = useRef<HTMLDivElement>(null);
   /** キーボードで点を消した後にフォーカスする点の番号（-1 はピアノロール） */
   const focusAfter = useRef<number | null>(null);
+  /**
+   * 編集が変わる直前にフォーカスのあった点の番号と、ピアノロールの要素。
+   * Ctrl+Z などで点のボタンが消えてフォーカスが外れたら、近くの点（無ければピアノロール）へ戻す
+   */
+  const keepFocus = useRef<{ index: number; section: HTMLElement | null } | null>(null);
+  useEffect(
+    () =>
+      useEditStore.subscribe(() => {
+        const container = overlayRef.current;
+        const focused = document.activeElement;
+        if (!container || !(focused instanceof HTMLButtonElement)) return;
+        const index = [...container.querySelectorAll("button")].indexOf(focused);
+        if (index >= 0) keepFocus.current = { index, section: container.closest("section") };
+      }),
+    [],
+  );
   useEffect(() => {
-    const index = focusAfter.current;
-    if (index === null) return;
+    const keep = keepFocus.current;
+    keepFocus.current = null;
+    const index = focusAfter.current ?? (lostFocus() ? keep?.index : null);
+    if (index === null || index === undefined) return;
     focusAfter.current = null;
     const container = overlayRef.current;
-    const button = container?.querySelectorAll<HTMLButtonElement>("button")[index];
+    const buttons = container?.querySelectorAll<HTMLButtonElement>("button");
+    const button = buttons?.[Math.min(index, buttons.length - 1)];
     // 描画範囲の外の点（Tab で移れない点）には移さず、ピアノロールへ戻す
     const target =
-      button && button.tabIndex !== -1 ? button : container?.closest<HTMLElement>("section");
+      button && button.tabIndex !== -1
+        ? button
+        : (container?.closest<HTMLElement>("section") ?? keep?.section);
     target?.focus({ preventScroll: true });
   });
   // 選んでいるノートが変わったら、選択中の点とプレビューを描画時にリセットする
@@ -418,6 +446,11 @@ export function useManualPitch(
       return;
     }
     const x = clampPointTime(pitch.data, index, p.x + dx);
+    // 隣の点に追いついて横に動けない時も、黙って無視せず理由を出す
+    if (dx !== 0 && x === p.x) {
+      setNotice("隣の点を越えて動かすことはできません。");
+      return;
+    }
     // 長押し（キーリピート）中の移動は、履歴を埋めないよう同じ長押しの最初の移動とまとめる
     if (!e.repeat || hold.current?.note !== noteId || hold.current.index !== index) {
       hold.current = { id: `hold-${++holdSeq}`, note: noteId, index };
@@ -457,8 +490,10 @@ export function useManualPitch(
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.stopPropagation();
-          // disabled のボタンにも pointer イベントは届くため、ロック中はここで止める
-          // （ピアノロールにも伝えないので、押しても矩形選択などは始まらない）
+          // disabled のボタンにも pointer イベントは届くため、ロック中はここで止める。
+          // ピアノロールにも伝えない（意図した動き）。伝えると、点を動かすつもりのドラッグで
+          // 選んでいるノート自体が動いてしまうため。点の上で他のノートを選んだり矩形選択を
+          // 始めたりはできないが、並べ替えの案内を出しているので、並べ替えれば普段どおり使える
           if (locked) return;
           // 別の指などで点をドラッグしている間は、ほかのポインターで新しいドラッグを始めない
           // （始めると、まだ離していない前のドラッグの移動まで一緒に確定してしまうため）
@@ -588,7 +623,12 @@ export function useManualPitch(
               ...pitch.data,
               { x: (pitch.data.at(-1)?.x ?? -100) + 100, y: 0, shape: "io" as const },
             ];
-            if (apply({ ...pitch, data }, "ピッチ点を追加")) setActive(data.length - 1);
+            if (!apply({ ...pitch, data }, "ピッチ点を追加")) return;
+            setActive(data.length - 1);
+            // 追加した点が描画範囲の外なら、見えないまま気づかずに編集しないよう知らせる
+            if (!placeOf(data[data.length - 1]).visible) {
+              setNotice("追加した点は表示範囲の外にあります。スクロールして確かめてください。");
+            }
           }}
         >
           ピッチ点を追加
@@ -740,6 +780,11 @@ function VibratoInput({
   const awaitingHistory = useRef<Element | null>(null);
   /** ボタンの上で離した後、クリックが届かなかった場合に確定するためのタイマー */
   const clickTimer = useRef(0);
+  /**
+   * ポインターを押している間か。押した時のフォーカスの移動は document の pointerdown の処理で扱うため、
+   * blur で「キーボードで履歴ボタンへ移った」とみなさない（右クリックでもフォーカスは移る）
+   */
+  const pressing = useRef(false);
   const discard = () => {
     awaitingHistory.current = null;
     clearTimeout(clickTimer.current);
@@ -763,15 +808,21 @@ function VibratoInput({
   });
   useEffect(() => {
     const onPointerDown = (e: globalThis.PointerEvent) => {
+      pressing.current = true;
       // 右クリック・中クリックではボタンが押されない（click が届かない）ため、保留しない
-      if (
-        e.button === 0 &&
-        pending.current !== null &&
-        e.target instanceof Element &&
-        e.target.closest("[data-history-action]:not(:disabled)")
-      ) {
-        awaitingHistory.current = e.target.closest("[data-history-action]");
+      const button = historyButton(e.target);
+      if (e.button === 0 && pending.current !== null && button) {
+        awaitingHistory.current = button;
       }
+    };
+    // キーボードで履歴ボタンへ移って保留している間に、押さずにフォーカスを外したら確定する
+    // （別の履歴ボタンへ移った時は、そのボタンで引き続き保留する）
+    const onFocusOut = (e: FocusEvent) => {
+      const button = awaitingHistory.current;
+      if (!button || e.target !== button) return;
+      const next = historyButton(e.relatedTarget);
+      if (next) awaitingHistory.current = next;
+      else commitNow();
     };
     const commitNow = () => {
       awaitingHistory.current = null;
@@ -779,6 +830,7 @@ function VibratoInput({
       flushRef.current(false);
     };
     const onPointerUp = (e: globalThis.PointerEvent) => {
+      pressing.current = false;
       const button = awaitingHistory.current;
       if (!button) return;
       // ボタンの外で離した（押すのをやめた）なら、すぐに確定する。タッチでは pointerup の target が
@@ -796,6 +848,7 @@ function VibratoInput({
       }, CLICK_WAIT_MS);
     };
     const onPointerCancel = () => {
+      pressing.current = false;
       if (awaitingHistory.current) commitNow();
     };
     // 「元に戻す」のクリックは、ボタンに届く前（document の capture 段階）で止めて、入力だけを取り消す。
@@ -836,7 +889,9 @@ function VibratoInput({
     document.addEventListener("pointerup", onPointerUp, true);
     document.addEventListener("pointercancel", onPointerCancel, true);
     document.addEventListener("click", onClick, true);
+    document.addEventListener("focusout", onFocusOut, true);
     return () => {
+      document.removeEventListener("focusout", onFocusOut, true);
       unsubscribe();
       window.removeEventListener("beforeunload", onBeforeUnload);
       document.removeEventListener("pointerdown", onPointerDown, true);
@@ -864,9 +919,16 @@ function VibratoInput({
           setInvalid(false);
           setDropped(false);
         }}
-        onBlur={() => {
+        onBlur={(e) => {
           // 履歴ボタンを押している間は、離すまで確定を保留する
-          if (!awaitingHistory.current) flush(false);
+          if (awaitingHistory.current) return;
+          // Tab で「元に戻す」「やり直す」へ移った時も、押す（Enter・Space）か離れるまで保留する
+          const button = pressing.current ? null : historyButton(e.relatedTarget);
+          if (button && pending.current !== null) {
+            awaitingHistory.current = button;
+            return;
+          }
+          flush(false);
         }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
