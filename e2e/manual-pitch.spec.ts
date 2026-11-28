@@ -705,3 +705,57 @@ test("「元に戻す」を右クリックしても、確定前の入力はす�
   await page.mouse.up({ button: "right" });
   await expect(length).toHaveValue("60");
 });
+
+test("追加した点のドラッグ中に Ctrl+Z で点が消えても、その後の編集を受け付ける", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
+  const added = page.getByRole("button", { name: "ピッチ点 3", exact: true });
+  const box = (await added.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 10, box.y - 20, { steps: 4 });
+  await page.keyboard.press("Control+z");
+  await expect(added).toBeHidden();
+  await page.mouse.up();
+  await point(page).focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("button", { name: "元に戻す", exact: true })).toHaveAttribute(
+    "title",
+    /ピッチ点を移動/,
+  );
+});
+
+test("ドラッグ中にスクロールしても、プレビューの点はポインターの下に残る", async ({ page }) => {
+  await openSelectedNote(page);
+  await startDrag(page);
+  const before = (await point(page).boundingBox())!;
+  const pointerY = before.y + before.height / 2;
+  await page.mouse.wheel(0, 200);
+  // スクロールした分だけ点が流されず、ポインターの位置で計算し直される
+  await expect
+    .poll(async () => {
+      const b = (await point(page).boundingBox())!;
+      return Math.abs(b.y + b.height / 2 - pointerY);
+    })
+    .toBeLessThan(6);
+  await page.mouse.up();
+});
+
+test("ピアノロールの外の role で作った部品で Space を押しても、表示移動モードにならない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await page.evaluate(() => {
+    const el = document.createElement("div");
+    el.setAttribute("role", "switch");
+    el.setAttribute("aria-label", "テスト用スイッチ");
+    el.tabIndex = 0;
+    document.body.append(el);
+  });
+  await page.getByRole("switch", { name: "テスト用スイッチ" }).focus();
+  await page.keyboard.down(" ");
+  await expect(point(page)).toHaveCSS("pointer-events", "auto");
+  await page.keyboard.up(" ");
+});

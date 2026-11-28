@@ -66,10 +66,15 @@ const isTextInput = (target: EventTarget | null) =>
     target instanceof HTMLTextAreaElement ||
     (target instanceof HTMLInputElement && !["checkbox", "radio", "button"].includes(target.type)));
 
-/** ピアノロールの外にある、Space で操作するフォーム部品（ボタン・チェックボックス・選択欄など） */
-const isOutsideControl = (target: EventTarget | null, roll: HTMLElement | null) =>
+/**
+ * ピアノロールの外の要素にフォーカスがあるか。keydown の target はフォーカスのある要素なので、
+ * ボタン・チェックボックス・role で作った部品（switch・tab など）をまとめて判定できる。
+ * 何もフォーカスしていない（body）ときは、ピアノロールの表示移動に使う
+ */
+const isOutsideFocus = (target: EventTarget | null, roll: HTMLElement | null) =>
   target instanceof Element &&
-  target.closest("button, select, input, summary, [role='button']") !== null &&
+  target !== document.body &&
+  target !== document.documentElement &&
   !roll?.contains(target);
 
 export function useRollGestures({ containerRef, part, bars, maxDuration, cam, scrollBy }: Options) {
@@ -87,8 +92,8 @@ export function useRollGestures({ containerRef, part, bars, maxDuration, cam, sc
         setSpaceHeld(false);
         return;
       }
-      // 文字の入力欄と、ピアノロールの外のボタン・チェックボックス・選択欄では、Space はその部品の操作に使う
-      if (isTextInput(e.target) || isOutsideControl(e.target, containerRef.current)) return;
+      // 文字の入力欄と、ピアノロールの外でフォーカスを持つ部品では、Space はその部品の操作に使う
+      if (isTextInput(e.target) || isOutsideFocus(e.target, containerRef.current)) return;
       setSpaceHeld(true);
     };
     const onBlur = () => setSpaceHeld(false);

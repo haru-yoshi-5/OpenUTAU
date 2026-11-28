@@ -42,6 +42,8 @@ interface Drag {
   note: number;
   x: number;
   y: number;
+  /** ポインター位置からドラッグ後のピッチを求める。表示位置は計算する時点のものを使う */
+  compute: (clientX: number, clientY: number, g: Drag) => Pitch;
   /** 押した位置から点の中心までのずれ。ドラッグ開始時に点がカーソルへ飛ばないようにする */
   offsetX: number;
   offsetY: number;
@@ -55,6 +57,20 @@ interface Drag {
 }
 
 /** ドラッグを終える（予約済みのプレビュー更新も取り消す） */
+/** ドラッグのプレビューを次のフレームで更新する（パート全体のピッチを計算し直すため、1 フレームに 1 回） */
+function schedulePreview(
+  drag: RefObject<Drag | null>,
+  g: Drag,
+  setDraft: (draft: { pitch: Pitch; edits: Edits }) => void,
+) {
+  if (g.frame) return;
+  g.frame = requestAnimationFrame(() => {
+    g.frame = 0;
+    if (drag.current !== g) return;
+    setDraft({ pitch: g.compute(g.lastX, g.lastY, g), edits: g.edits });
+  });
+}
+
 function stopDrag(drag: RefObject<Drag | null>) {
   if (drag.current?.frame) cancelAnimationFrame(drag.current.frame);
   drag.current = null;
@@ -138,10 +154,25 @@ export function useManualPitch(
     setContextShown(dragContext);
     setDraft(null);
   }
-  // ノートが変わった時（Ctrl+A など）や上の切り替えで点のボタンが消えても、ドラッグ状態を残さない
+  // ノートが変わった時（Ctrl+A など）や上の切り替えで点のボタンが消えても、ドラッグ状態を残さない。
+  // 編集が変わった時（ドラッグ中の Ctrl+Z など）も片付ける。ドラッグ中の点が消えると pointerup が
+  // 届かないうえ、離しても確定しない（ドラッグ開始時と編集が違う）ため
   useEffect(() => {
     stopDrag(drag);
-  }, [noteId, showPitch, panMode]);
+  }, [noteId, showPitch, panMode, edits]);
+  /**
+   * 最新の表示位置（スクロール・拡大率）。ドラッグのプレビューは後のフレームで計算するため、
+   * ドラッグ中にスクロールしても、その時点の表示位置で計算できるよう ref で持つ
+   */
+  const camRef = useRef(cam);
+  useEffect(() => {
+    camRef.current = cam;
+  });
+  // ドラッグ中にスクロール・拡大縮小したら、ポインターを動かさなくてもプレビューを計算し直す
+  useEffect(() => {
+    const g = drag.current;
+    if (g?.moved) schedulePreview(drag, g, setDraft);
+  }, [cam.pxPerTick, cam.scrollTick, cam.scrollY]);
   /**
    * 長押し中の矢印キーの目印と、その長押しを始めた点の番号。同じ目印の移動は 1 つの操作にまとめる。
    * 押したまま別の点へフォーカスを移すとキーリピートしか届かないため、点の番号でも区別する
@@ -253,10 +284,11 @@ export function useManualPitch(
     const origin = drawingOrigin(g.section);
     const x = clientX + g.offsetX - origin.left - KEY_WIDTH;
     const y = clientY + g.offsetY - origin.top - RULER_HEIGHT;
-    const tick = xToTick(x, cam);
+    const view = camRef.current;
+    const tick = xToTick(x, view);
     const ms = pointTime(axis, part.position, target.position, tick);
     const relativeY = Math.round(
-      ((centsToY(adjustedTone(target) * 100, cam) - y) / ROW_HEIGHT) * 10,
+      ((centsToY(adjustedTone(target) * 100, view) - y) / ROW_HEIGHT) * 10,
     );
     const old = g.pitch.data[g.index];
     return changePoint(
@@ -366,6 +398,7 @@ export function useManualPitch(
             id: e.pointerId,
             index: i,
             pitch,
+            compute: move,
             edits: useEditStore.getState().edits,
             part: part.index,
             note: target.index,
@@ -390,14 +423,7 @@ export function useManualPitch(
             g.moved = true;
             g.lastX = e.clientX;
             g.lastY = e.clientY;
-            // パート全体のピッチを計算し直すため、プレビューの更新は 1 フレームに 1 回にまとめる
-            if (!g.frame) {
-              g.frame = requestAnimationFrame(() => {
-                g.frame = 0;
-                if (drag.current !== g) return;
-                setDraft({ pitch: move(g.lastX, g.lastY, g), edits: g.edits });
-              });
-            }
+            schedulePreview(drag, g, setDraft);
           }
         }}
         onPointerUp={(e) => {
