@@ -154,12 +154,16 @@ export function useManualPitch(
     setContextShown(dragContext);
     setDraft(null);
   }
-  // ノートが変わった時（Ctrl+A など）や上の切り替えで点のボタンが消えても、ドラッグ状態を残さない。
-  // 編集が変わった時（ドラッグ中の Ctrl+Z など）も片付ける。ドラッグ中の点が消えると pointerup が
-  // 届かないうえ、離しても確定しない（ドラッグ開始時と編集が違う）ため
+  // ノートが変わった時（Ctrl+A など）や上の切り替えで点のボタンが消えても、ドラッグ状態を残さない
   useEffect(() => {
     stopDrag(drag);
-  }, [noteId, showPitch, panMode, edits]);
+  }, [noteId, showPitch, panMode]);
+  // ドラッグ開始時から編集が変わった時（ドラッグ中の Ctrl+Z など）も片付ける。ドラッグ中の点が
+  // 消えると pointerup が届かないうえ、離しても確定しない（ドラッグ開始時と編集が違う）ため。
+  // 押した時に確定したビブラートの入力は開始時の編集に含まれるので、ドラッグを止めない
+  useEffect(() => {
+    if (drag.current && drag.current.edits !== edits) stopDrag(drag);
+  }, [edits]);
   /**
    * 最新の表示位置（スクロール・拡大率）。ドラッグのプレビューは後のフレームで計算するため、
    * ドラッグ中にスクロールしても、その時点の表示位置で計算できるよう ref で持つ
@@ -390,6 +394,8 @@ export function useManualPitch(
           // disabled のボタンにも pointer イベントは届くため、ロック中はここで止める
           // （ピアノロールにも伝えないので、押しても矩形選択などは始まらない）
           if (locked) return;
+          // フォーカスを移すと、ビブラート欄の確定前の入力がここで（同期的に）確定する。
+          // その後の編集をドラッグ開始時の編集として取るため、先にフォーカスを移す
           e.currentTarget.focus({ preventScroll: true });
           e.currentTarget.setPointerCapture(e.pointerId);
           setActive(i);
@@ -578,6 +584,11 @@ export function useManualPitch(
           先頭点を前のノートに接続
         </label>
       </div>
+      {pitch.data.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          このノートにはピッチ点がありません。「ピッチ点を追加」で追加できます。
+        </p>
+      )}
       <p className="text-xs text-muted-foreground">
         自動接続中は先頭点の音高が前のノートとの音高差に置き換わります。解除すると自由に編集できます。
         {pitch.snap_first &&

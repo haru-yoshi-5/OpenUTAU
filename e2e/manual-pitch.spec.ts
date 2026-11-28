@@ -759,3 +759,32 @@ test("ピアノロールの外の role で作った部品で Space を押して�
   await expect(point(page)).toHaveCSS("pointer-events", "auto");
   await page.keyboard.up(" ");
 });
+
+test("確定前のビブラート入力があっても、点を押してそのままドラッグできる", async ({ page }) => {
+  await openSelectedNote(page);
+  const length = page.getByRole("spinbutton", { name: "ビブラート 長さ (%)", exact: true });
+  await length.fill("60");
+  const before = (await point(page).boundingBox())!;
+  await startDrag(page);
+  // 押した時にビブラートの入力が確定し、ドラッグはそのまま続く
+  await expect.poll(async () => (await point(page).boundingBox())!.y).toBeLessThan(before.y - 10);
+  await page.mouse.up();
+  await expect(length).toHaveValue("60");
+  const undo = page.getByRole("button", { name: "元に戻す", exact: true });
+  await expect(undo).toHaveAttribute("title", /ピッチ点を移動/);
+  await undo.click();
+  await expect(undo).toHaveAttribute("title", /ビブラートを変更/);
+});
+
+test("ピッチ点が 1 つも無いノートでは、追加の仕方を案内する", async ({ page }) => {
+  await openSelectedNote(page);
+  const empty = page.getByText(/このノートにはピッチ点がありません/);
+  await expect(empty).toBeHidden();
+  await page.getByRole("checkbox", { name: "先頭点を前のノートに接続" }).uncheck();
+  const remove = page.getByRole("button", { name: "ピッチ点を削除", exact: true });
+  const points = page.getByRole("button", { name: /^ピッチ点 \d+$/ });
+  while ((await points.count()) > 0) await remove.click();
+  await expect(empty).toBeVisible();
+  await page.getByRole("button", { name: "ピッチ点を追加", exact: true }).click();
+  await expect(empty).toBeHidden();
+});
