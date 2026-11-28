@@ -47,6 +47,12 @@ interface Drag {
   /** 押した位置から点の中心までのずれ。ドラッグ開始時に点がカーソルへ飛ばないようにする */
   offsetX: number;
   offsetY: number;
+  /**
+   * 押した時の点の位置（tick と、ノートの音高からの高さ。高さは 10 cent 単位で丸める前の値）。
+   * 片方の向きにだけ動かした時に、動かしていない向きの値を丸めて変えないために使う
+   */
+  startTick: number;
+  startHeight: number;
   moved: boolean;
   /** 座標の基準にするピアノロールの要素 */
   section: Element | null;
@@ -289,25 +295,46 @@ export function useManualPitch(
     ...source,
     data: source.data.map((p, i) => (i === index ? point : p)),
   });
-  const move = (clientX: number, clientY: number, g: Drag) => {
-    if (!g.section) return g.pitch;
+  /**
+   * ポインター位置にある点の中心の、tick とノートの音高からの高さ（10 cent 単位、丸める前）。
+   * 表示位置は計算する時点のものを使う
+   */
+  const locate = (
+    clientX: number,
+    clientY: number,
+    g: Pick<Drag, "section" | "offsetX" | "offsetY">,
+  ) => {
+    if (!g.section) return null;
     const origin = drawingOrigin(g.section);
     const x = clientX + g.offsetX - origin.left - KEY_WIDTH;
     const y = clientY + g.offsetY - origin.top - RULER_HEIGHT;
     const view = camRef.current;
-    const tick = xToTick(x, view);
-    const ms = pointTime(axis, part.position, target.position, tick);
-    const relativeY = Math.round(
-      ((centsToY(adjustedTone(target) * 100, view) - y) / ROW_HEIGHT) * 10,
-    );
+    return {
+      tick: xToTick(x, view),
+      height: ((centsToY(adjustedTone(target) * 100, view) - y) / ROW_HEIGHT) * 10,
+    };
+  };
+  const move = (clientX: number, clientY: number, g: Drag) => {
+    const at = locate(clientX, clientY, g);
+    if (!at) return g.pitch;
     const old = g.pitch.data[g.index];
+    // 片方の向きにだけ動かした時は、もう片方の値を変えない（読み込んだ点の端数を丸めてしまわないよう）。
+    // 横は 1 px 未満、縦は丸めても値が変わらない幅（半単位 = 5 cent）未満の動きを「動かしていない」とする
+    const keepX = Math.abs(at.tick - g.startTick) * camRef.current.pxPerTick < 1;
+    const keepY = Math.abs(at.height - g.startHeight) < 0.5;
     return changePoint(
       g.index,
       {
         ...old,
-        x: clampPointTime(g.pitch.data, g.index, ms),
+        x: keepX
+          ? old.x
+          : clampPointTime(
+              g.pitch.data,
+              g.index,
+              pointTime(axis, part.position, target.position, at.tick),
+            ),
         // 自動接続で高さが決まる点（並べ替え後は先頭）は高さを変えない
-        y: g.index === 0 && g.pitch.snap_first ? old.y : relativeY,
+        y: (g.index === 0 && g.pitch.snap_first) || keepY ? old.y : Math.round(at.height),
       },
       g.pitch,
     );
@@ -346,6 +373,11 @@ export function useManualPitch(
     if (e.key === "Delete" || e.key === "Backspace") {
       // 長押しでは消さない。消した後はフォーカスが前の点へ移るため、キーリピートで次々と消えてしまう
       if (e.repeat) return;
+      // 消せない時（自動接続中の最後の 1 点）は、黙って無視せず理由を出す
+      if (!canRemove) {
+        setNotice("自動接続中は最後の 1 点を削除できません（OpenUtau で開けなくなるため）。");
+        return;
+      }
       // 消した点のボタンが無くなってもキーボード操作を続けられるよう、前の点へフォーカスを移す
       if (remove(index)) focusAfter.current = pitch.data.length > 1 ? Math.max(0, index - 1) : -1;
       return;
@@ -410,26 +442,36 @@ export function useManualPitch(
           // disabled のボタンにも pointer イベントは届くため、ロック中はここで止める
           // （ピアノロールにも伝えないので、押しても矩形選択などは始まらない）
           if (locked) return;
+          // 別の指などで点をドラッグしている間は、ほかのポインターで新しいドラッグを始めない
+          // （始めると、まだ離していない前のドラッグの移動まで一緒に確定してしまうため）
+          if (drag.current && drag.current.id !== e.pointerId) return;
           // フォーカスを移すと、ビブラート欄の確定前の入力がここで（同期的に）確定する。
           // その後の編集をドラッグ開始時の編集として取るため、先にフォーカスを移す
           e.currentTarget.focus({ preventScroll: true });
           e.currentTarget.setPointerCapture(e.pointerId);
           setActive(i);
           const box = e.currentTarget.getBoundingClientRect();
+          const grip = {
+            offsetX: box.left + box.width / 2 - e.clientX,
+            offsetY: box.top + box.height / 2 - e.clientY,
+            section: e.currentTarget.closest("section"),
+          };
+          const start = locate(e.clientX, e.clientY, grip);
           drag.current = {
             id: e.pointerId,
             index: i,
-            pitch,
+            // 土台はプレビューではなく記録済みのピッチにする（確定していない移動を含めないため）
+            pitch: sortPitchPoints(target.pitch),
             compute: move,
             edits: useEditStore.getState().edits,
             part: part.index,
             note: target.index,
             x: e.clientX,
             y: e.clientY,
-            offsetX: box.left + box.width / 2 - e.clientX,
-            offsetY: box.top + box.height / 2 - e.clientY,
+            ...grip,
+            startTick: start?.tick ?? 0,
+            startHeight: start?.height ?? 0,
             moved: false,
-            section: e.currentTarget.closest("section"),
             lastX: e.clientX,
             lastY: e.clientY,
             frame: 0,

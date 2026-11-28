@@ -836,3 +836,92 @@ test("自動接続中の先頭点で上下キーを押すと、高さを変え�
   await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
   await expect(notice).toBeHidden();
 });
+
+test("2 本目の指で別の点を動かしても、1 本目の確定前のドラッグを一緒に確定しない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  const a = (await point(page).boundingBox())!;
+  const b = (await page.getByRole("button", { name: "ピッチ点 1", exact: true }).boundingBox())!;
+  const ax = a.x + a.width / 2;
+  const ay = a.y + a.height / 2;
+  const bx = b.x + b.width / 2;
+  const by = b.y + b.height / 2;
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (
+    type: "touchStart" | "touchMove" | "touchEnd",
+    touchPoints: { x: number; y: number; id: number }[],
+  ) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
+  await touch("touchStart", [{ x: ax, y: ay, id: 1 }]);
+  for (let i = 1; i <= 5; i++) await touch("touchMove", [{ x: ax, y: ay - i * 6, id: 1 }]);
+  const held = { x: ax, y: ay - 30, id: 1 };
+  await touch("touchStart", [held, { x: bx, y: by, id: 2 }]);
+  for (let i = 1; i <= 5; i++) await touch("touchMove", [held, { x: bx + i * 4, y: by, id: 2 }]);
+  // 2 本目だけ離す
+  await touch("touchMove", [held]);
+  await expect(editStatus(page)).toHaveText("編集はありません");
+  // 1 本目を離すと、1 本目の移動だけが確定する（2 本目で触った点 1 は動かない）
+  await touch("touchEnd", []);
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+  const pitch = await exportedPitch(page);
+  expect(pitch.data[0].x).toBe(-25);
+  expect(pitch.data[1].y).not.toBe(0);
+});
+
+/** 端数のある点（OpenUtau で動かした点など）を持つノートを開く */
+async function openFractionalNote(page: Page) {
+  const project = parse(await readFile("public/samples/demo.ustx", "utf8"));
+  project.voice_parts[0].notes[1].pitch.data = [
+    { x: -25, y: 0, shape: "io" },
+    { x: 37.3, y: 2.35, shape: "io" },
+  ];
+  await page.goto("/");
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "fractional.ustx",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from(stringify(project)),
+  });
+  await expect(page.getByRole("heading", { name: "KOEBIT デモ" })).toBeVisible();
+  await page.getByRole("application").scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => window.__koebitTest !== undefined);
+  await clickNote(page, 1);
+  await expect(point(page)).toBeVisible();
+}
+
+async function dragPoint(page: Page, dx: number, dy: number) {
+  const box = (await point(page).boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx, y + dy, { steps: 6 });
+  await page.mouse.up();
+  await expect(editStatus(page)).toHaveText("1 個のノートを編集中");
+}
+
+test("横にだけドラッグしても、点の高さの端数を丸めない", async ({ page }) => {
+  await openFractionalNote(page);
+  await dragPoint(page, 30, 0);
+  const moved = (await exportedPitch(page)).data[1];
+  expect(moved.y).toBe(2.35);
+  expect(moved.x).not.toBe(37.3);
+});
+
+test("縦にだけドラッグしても、点の時刻の端数を丸めない", async ({ page }) => {
+  await openFractionalNote(page);
+  await dragPoint(page, 0, -30);
+  const moved = (await exportedPitch(page)).data[1];
+  expect(moved.x).toBe(37.3);
+  expect(moved.y).not.toBe(2.35);
+});
+
+test("自動接続中に最後の 1 点で Delete を押すと、消せない理由を案内する", async ({ page }) => {
+  await openSelectedNote(page);
+  await page.getByRole("button", { name: "ピッチ点を削除", exact: true }).click();
+  await page.getByRole("button", { name: "ピッチ点 1", exact: true }).focus();
+  await page.keyboard.press("Delete");
+  await expect(
+    page.getByRole("status").filter({ hasText: /最後の 1 点を削除できません/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(1);
+});
