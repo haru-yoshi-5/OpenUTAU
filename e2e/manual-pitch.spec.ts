@@ -454,6 +454,8 @@ test("ドラッグ中に矢印キーを押しても、確定前の位置を記�
   await startDrag(page);
   await page.keyboard.press("ArrowUp");
   await expect(editStatus(page)).toHaveText("編集はありません");
+  // 黙って無視せず、理由を案内する
+  await expect(page.getByText(/ドラッグ中はキーで点を編集できません/)).toBeVisible();
   await page.keyboard.press("Escape");
   await page.mouse.up();
   await expect(editStatus(page)).toHaveText("編集はありません");
@@ -576,6 +578,27 @@ test("表示範囲の外へスクロールした点には、Tab で移れない"
   }
   expect((await point(page).boundingBox())!.y).not.toBe(before.y);
   await expect(point(page)).toHaveAttribute("tabindex", "-1");
+});
+
+test("フォーカスしたまま表示範囲の外へスクロールした点は、キーで消したり動かしたりしない", async ({
+  page,
+}) => {
+  await openSelectedNote(page);
+  await point(page).focus();
+  const box = (await roll(page).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (const dy of [-3000, 3000]) {
+    await page.mouse.wheel(0, dy);
+    const after = await point(page).boundingBox();
+    if (after && (after.y + after.height < box.y || after.y > box.y + box.height)) break;
+  }
+  await expect(point(page)).toHaveAttribute("tabindex", "-1");
+  await expect(point(page)).toBeFocused();
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByText(/表示範囲の外の点は編集できません/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /^ピッチ点 \d+$/ })).toHaveCount(2);
+  await expect(editStatus(page)).toHaveText("編集はありません");
 });
 
 /** タッチのタップ：pointerup の後、別のタスクでクリックが届く */

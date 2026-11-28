@@ -347,6 +347,17 @@ export function useManualPitch(
     }
     return false;
   };
+  /**
+   * 点の描画位置と、描画範囲の中にあるか。範囲の外の点は Tab で移れず、キーでも編集しない
+   * （見えないまま動かしたり消したりしないため）
+   */
+  const placeOf = (p: PitchPoint) => {
+    // 曲線の計算（renderPartPitch）と同じく tick に丸め、点と曲線の折れ目をそろえる
+    const tick = Math.round(axis.msToTick(startMs + p.x)) - part.position;
+    const x = tickToX(tick, cam);
+    const y = centsToY(adjustedTone(target) * 100 + p.y * 10, cam);
+    return { x, y, visible: x >= 0 && x <= viewport.width && y >= 0 && y <= viewport.height };
+  };
   const pointKey = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
     // Esc（選択の解除）と Ctrl / ⌘ + A（全選択）はピアノロールに任せる。ノートが 1 つだけ選ばれた
     // 状態でなくなり点のボタンが消えるため、選択が変わる前にピアノロールへフォーカスを移す
@@ -366,6 +377,18 @@ export function useManualPitch(
     if (!POINT_KEYS.includes(e.key)) return;
     e.preventDefault();
     e.stopPropagation();
+    // ドラッグで点を動かしている間は、キーでは編集しない（確定前のドラッグを土台にしないため）。
+    // 選んでいる点も変えず、黙って無視せず理由を出す
+    if (drag.current?.moved) {
+      setNotice("ドラッグ中はキーで点を編集できません。離してから操作してください。");
+      return;
+    }
+    // スクロールで描画範囲の外へ出た点は、フォーカスが残っていてもキーで編集しない
+    // （見えないまま動かしたり消したりしないため）
+    if (!placeOf(displayed[index]).visible) {
+      setNotice("表示範囲の外の点は編集できません。点が見える位置までスクロールしてください。");
+      return;
+    }
     // 点を押しただけで、まだ動かしていないなら、ドラッグをやめてキー操作を受け付ける
     // （ドラッグ中の編集は受け付けないため、押している間のキー操作が黙って失われないようにする）
     if (drag.current && !drag.current.moved) cancel();
@@ -406,13 +429,8 @@ export function useManualPitch(
     );
   };
   const points = displayed.map((p, i) => {
-    // 曲線の計算（renderPartPitch）と同じく tick に丸め、点と曲線の折れ目をそろえる
-    const tick = Math.round(axis.msToTick(startMs + p.x)) - part.position;
-    const x = tickToX(tick, cam);
-    const y = centsToY(adjustedTone(target) * 100 + p.y * 10, cam);
+    const { x, y, visible } = placeOf(p);
     const isActive = activeIndex === i;
-    // 描画範囲の外の点は Tab で移れないようにする（見えないまま動かしたり消したりしないため）
-    const visible = x >= 0 && x <= viewport.width && y >= 0 && y <= viewport.height;
     return (
       <button
         key={i}
